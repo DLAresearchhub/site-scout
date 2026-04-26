@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
-const FileStore = require('session-file-store')(session);
+const SQLiteStore = require('connect-sqlite3')(session);
 const bodyParser = require('body-parser');
 const path = require('path');
 const usageLogger = require('./services/usage-logger');
@@ -18,7 +18,7 @@ app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
 app.use(
   session({
-    store: new FileStore({ path: './sessions', ttl: 86400, retries: 0 }),
+    store: new SQLiteStore({ db: 'sessions.db' }),
     secret: process.env.SESSION_SECRET || 'your-secret-key',
     resave: false,
     saveUninitialized: true,
