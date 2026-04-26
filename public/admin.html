@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Site Scout Admin - Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/admin.css">
+</head>
+<body>
+  <div class="admin-app">
+    <!-- Login Screen -->
+    <section id="login-screen" class="screen active">
+      <div class="login-container">
+        <div class="login-card">
+          <h1>Site Scout Admin</h1>
+          <p>Enter your password to access the dashboard</p>
+          
+          <form id="login-form">
+            <input
+              type="password"
+              id="admin-password"
+              class="input-field"
+              placeholder="Admin password"
+              autocomplete="off"
+            >
+            <button type="submit" class="btn btn-primary">Login</button>
+          </form>
+
+          <div id="login-error" class="error-message"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Dashboard Screen -->
+    <section id="dashboard-screen" class="screen">
+      <!-- Header -->
+      <header class="admin-header">
+        <div class="header-left">
+          <h1>Site Scout Admin Dashboard</h1>
+        </div>
+        <div class="header-right">
+          <button class="btn btn-secondary" onclick="logout()">Logout</button>
+        </div>
+      </header>
+
+      <!-- Main Content -->
+      <main class="admin-container">
+        <!-- Stats Grid -->
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Total Sessions</div>
+            <div class="stat-value" id="stat-total-sessions">0</div>
+            <div class="stat-subtext">All time</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Sessions This Week</div>
+            <div class="stat-value" id="stat-week-sessions">0</div>
+            <div class="stat-subtext">Last 7 days</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Today's Sessions</div>
+            <div class="stat-value" id="stat-today-sessions">0</div>
+            <div class="stat-subtext">Since midnight</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Total Images Generated</div>
+            <div class="stat-value" id="stat-total-images">0</div>
+            <div class="stat-subtext">All time</div>
+          </div>
+        </div>
+
+        <!-- Charts Section -->
+        <div class="charts-section">
+          <div class="chart-card">
+            <h3>Daily Usage (Last 7 Days)</h3>
+            <div class="bar-chart" id="bar-chart"></div>
+          </div>
+
+          <div class="chart-card">
+            <h3>Top Building Types</h3>
+            <div class="list" id="top-types"></div>
+          </div>
+
+          <div class="chart-card">
+            <h3>Top Cities</h3>
+            <div class="list" id="top-cities"></div>
+          </div>
+        </div>
+
+        <!-- Recent Sessions Table -->
+        <div class="table-card">
+          <h3>Recent Sessions</h3>
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>City</th>
+                  <th>Sites Found</th>
+                  <th>Generations</th>
+                  <th>Images Generated</th>
+                  <th>Date</th>
+                </tr>
+              </thead>
+              <tbody id="recent-sessions-table">
+                <tr>
+                  <td colspan="5" class="empty-state">Loading...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </main>
+    </section>
+  </div>
+
+  <script src="/js/admin.js"></script>
+</body>
+</html>
