@@ -286,7 +286,7 @@ async function generateStubSites(city, count = 5) {
     const latOffset = (pseudoRand(city, i * 11) - 0.5) * 0.024;
     const lngOffset = (pseudoRand(city, i * 13) - 0.5) * 0.024;
 
-    const siteTypes = ['vacant_land', 'derelict_building', 'development_site'];
+    const siteTypes = ['vacant_land', 'development_site', 'vacant_land']; // empty sites only
     const siteType = siteTypes[Math.floor(pseudoRand(city, i * 17) * siteTypes.length)];
 
     const areaM2 = Math.floor(pseudoRand(city, i * 19) * 4500) + 500; // 500–5000 m²
