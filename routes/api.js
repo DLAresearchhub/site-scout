@@ -23,7 +23,7 @@ router.post('/search-sites', async (req, res) => {
     }
 
     // Generate stubbed sites
-    const sites = await siteFinder.generateSites(city);
+    const sites = await siteFinder.findSites(city);
 
     // Log session
     usageLogger.logSession({
