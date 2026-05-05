@@ -515,18 +515,29 @@ function displayResults(images) {
   document.getElementById('results-site-label').textContent =
     `${pillState.building_type || ''}${state.currentCity ? ' — ' + state.currentCity : ''}`;
 
+  const VIEW_LABELS = {
+    aerial:             'Aerial View',
+    perspective_3d:     '3D Perspective',
+    perspective_dusk:   '3D — Dusk',
+    perspective_night:  '3D — Night',
+    street_front:       'Street — Front',
+    street_corner:      'Street — Corner',
+    street_entrance:    'Street — Entrance',
+  };
+
   // Hero (first image)
   const hero = document.getElementById('results-hero');
+  const heroLabel = VIEW_LABELS[images[0].type] || 'Primary View';
   hero.innerHTML = `
-    <img src="${images[0].url}" alt="Aerial CGI">
-    <p class="results-hero-caption">Aerial / Primary View</p>
+    <img src="${images[0].url}" alt="${heroLabel}">
+    <p class="results-hero-caption">${heroLabel}</p>
   `;
 
   // Grid (remaining images)
   const grid = document.getElementById('results-grid');
   grid.innerHTML = '';
   images.slice(1).forEach(img => {
-    const label = (img.type || '').replace(/_/g, ' ');
+    const label = VIEW_LABELS[img.type] || (img.type || '').replace(/_/g, ' ');
     const item = document.createElement('div');
     item.className = 'result-item';
     item.innerHTML = `

@@ -172,10 +172,29 @@ async function processGenerationJob(jobId, params) {
       captureBase64 = buf.toString('base64');
     }
 
+    // Pick generation strategy based on the capture type
+    const is3D = capture.type === 'mapbox3d' || capture.type === 'birdseye';
+    const isStreet = capture.type === 'streetview';
+
+    let primaryView, additionalViews, primaryLabel;
+    if (is3D) {
+      primaryView    = 'perspective_3d';
+      additionalViews = ['perspective_dusk', 'perspective_night', 'street_front'];
+      primaryLabel   = 'Generating 3D perspective CGI...';
+    } else if (isStreet) {
+      primaryView    = 'street_front';
+      additionalViews = ['street_corner', 'street_entrance', 'aerial'];
+      primaryLabel   = 'Generating street-level CGI...';
+    } else {
+      primaryView    = 'aerial';
+      additionalViews = ['street_front', 'street_corner', 'street_entrance'];
+      primaryLabel   = 'Generating aerial CGI...';
+    }
+
     const statusSteps = [
       'Analysing site context...',
       'Building architectural prompt...',
-      'Generating aerial CGI...',
+      primaryLabel,
       'Creating additional views...',
       'Finishing up...',
     ];
@@ -185,16 +204,13 @@ async function processGenerationJob(jobId, params) {
       job.message = statusSteps[i];
 
       if (i === 2) {
-        // Aerial / primary view
-        const prompt = promptBuilder.buildPrompt(pill_state, 'aerial');
+        const prompt = promptBuilder.buildPrompt(pill_state, primaryView);
         const imageUrl = await imageGenerator.generateFromCapture(captureBase64, 'image/jpeg', prompt, reference_images);
-        job.images.push({ type: 'aerial', url: imageUrl });
+        job.images.push({ type: primaryView, url: imageUrl });
       }
 
       if (i === 3) {
-        // 3 additional views (different angles/perspectives)
-        const viewTypes = ['street_front', 'street_corner', 'street_entrance'];
-        for (const viewType of viewTypes) {
+        for (const viewType of additionalViews) {
           const prompt = promptBuilder.buildPrompt(pill_state, viewType);
           const imageUrl = await imageGenerator.generateFromCapture(captureBase64, 'image/jpeg', prompt, reference_images);
           job.images.push({ type: viewType, url: imageUrl });

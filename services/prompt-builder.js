@@ -53,10 +53,13 @@ const BUILDING_DESCRIPTORS = {
 };
 
 const VIEW_INSTRUCTIONS = {
-  aerial:          'Photorealistic aerial drone CGI looking down at approximately 45 degrees. Show the full building footprint, roof, and immediate surroundings.',
-  street_front:    'Photorealistic street-level CGI of the front facade. Eye-level perspective from across the street showing the full elevation.',
-  street_corner:   'Photorealistic street-level CGI from a corner angle showing two facades. Human-scale perspective with pedestrians and street activity.',
-  street_entrance: 'Photorealistic street-level CGI focused on the main entrance and ground floor. Close-up perspective showing materiality and detail.',
+  aerial:           'Photorealistic aerial drone CGI looking down at approximately 45 degrees. Show the full building footprint, roof, and immediate surroundings.',
+  perspective_3d:   'Using EXACTLY the same oblique 3D camera angle and perspective as this photograph, place the proposed building on the empty site shown. Do not change the viewpoint, zoom, or bearing. Match the scale and proportion of the surrounding buildings. Show realistic shadows, materials, and reflections consistent with the site context.',
+  perspective_dusk: 'Using EXACTLY the same oblique 3D camera angle and perspective as this photograph, place the proposed building on the empty site at dusk — warm interior lighting glowing from windows, exterior uplighting, and a deep blue twilight sky. Do not change the viewpoint or bearing.',
+  perspective_night: 'Using EXACTLY the same oblique 3D camera angle and perspective as this photograph, place the proposed building on the empty site at night — fully illuminated interiors, dramatic exterior uplighting, and ambient street lighting. Do not change the viewpoint or bearing.',
+  street_front:     'Photorealistic street-level CGI of the front facade. Eye-level perspective from across the street showing the full elevation.',
+  street_corner:    'Photorealistic street-level CGI from a corner angle showing two facades. Human-scale perspective with pedestrians and street activity.',
+  street_entrance:  'Photorealistic street-level CGI focused on the main entrance and ground floor. Close-up perspective showing materiality and detail.',
 };
 
 function buildPrompt(pillState, viewType = 'aerial') {
