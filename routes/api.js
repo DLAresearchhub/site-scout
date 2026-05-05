@@ -34,7 +34,7 @@ router.post('/search-sites', async (req, res) => {
     const { city } = req.body;
     if (!city || !city.trim()) return res.status(400).json({ error: 'City is required' });
 
-    const sites = await siteFinder.findSites(city);
+    const sites = await siteFinder.findSites(city, { count: 20 });
     usageLogger.logSession({ city, sessionId: req.sessionID, ip: req.ip, sites_found: sites.length });
     res.json({ sites });
   } catch (error) {
