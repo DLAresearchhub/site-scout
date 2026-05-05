@@ -23,6 +23,8 @@
 
 'use strict';
 
+const usageLogger = require('./usage-logger');
+
 // ─── Nominatim geocoding ──────────────────────────────────────────────────────
 
 /**
@@ -429,8 +431,37 @@ async function parseAndGeocodeResults(searchResults, city) {
  * @param {boolean} [options.forceStub] — Force stub mode regardless of API key
  * @returns {Promise<SiteResult[]>}
  */
+/**
+ * Convert a scraped_sites DB row into a SiteResult.
+ */
+function rowToSiteResult(row) {
+  return {
+    name: row.name,
+    address: row.address || row.city,
+    city: row.city,
+    siteType: row.site_type || 'brownfield',
+    areaM2: row.area_m2 || null,
+    lat: row.lat,
+    lng: row.lng,
+    source: 'scraped',
+    sourceUrl: null,
+    description: `${row.site_type || 'Brownfield'} site in ${row.city}. Pre-scraped from OpenStreetMap.`,
+    imageUrl: row.image_url || null,
+  };
+}
+
 async function findSites(city, options = {}) {
   const { count = 5, forceStub = false } = options;
+
+  // Check pre-scraped DB first
+  if (!forceStub) {
+    const scraped = usageLogger.getScrapedSites(city);
+    if (scraped.length > 0) {
+      console.log(`[SiteFinder] Serving ${scraped.length} pre-scraped sites for "${city}"`);
+      return scraped.slice(0, count).map(rowToSiteResult);
+    }
+    console.log(`[SiteFinder] No pre-scraped sites for "${city}" — using stub/live fallback`);
+  }
 
   const useStub =
     forceStub ||

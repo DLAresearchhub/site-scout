@@ -47,6 +47,24 @@ function init() {
       )
     `);
 
+    // Pre-scraped sites table
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS scraped_sites (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        city       TEXT NOT NULL,
+        name       TEXT NOT NULL,
+        address    TEXT,
+        lat        REAL NOT NULL,
+        lng        REAL NOT NULL,
+        site_type  TEXT DEFAULT 'brownfield',
+        area_m2    REAL,
+        image_url  TEXT,
+        source     TEXT DEFAULT 'overpass',
+        scraped_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_scraped_sites_city ON scraped_sites(city);
+    `);
+
     // Create indexes for faster queries
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sessions_createdAt ON sessions(createdAt);
@@ -279,6 +297,21 @@ function close() {
   }
 }
 
+/**
+ * Get pre-scraped sites for a city.
+ * Returns empty array if city hasn't been scraped yet.
+ */
+function getScrapedSites(city) {
+  try {
+    if (!db) return [];
+    return db.prepare(
+      'SELECT * FROM scraped_sites WHERE city = ? ORDER BY scraped_at DESC LIMIT 15'
+    ).all(city.trim().toLowerCase());
+  } catch {
+    return [];
+  }
+}
+
 module.exports = {
   init,
   logSession,
@@ -286,5 +319,6 @@ module.exports = {
   getStats,
   getRecentSessions,
   clearOldLogs,
-  close
+  close,
+  getScrapedSites,
 };

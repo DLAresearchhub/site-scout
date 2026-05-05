@@ -124,16 +124,26 @@ function displaySearchResults(sites) {
   initSitesMap(sites);
 
   sites.forEach((site, idx) => {
-    const bbox = `${(site.lng-0.004).toFixed(6)},${(site.lat-0.003).toFixed(6)},${(site.lng+0.004).toFixed(6)},${(site.lat+0.003).toFixed(6)}`;
-    const embedUrl = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${site.lat},${site.lng}`;
-    const siteTypeLabel = site.siteType === 'development_site' ? 'Development Site' : 'Vacant Land';
+    const siteTypeLabel = site.siteType === 'development_site' ? 'Development Site'
+                        : site.siteType === 'brownfield' ? 'Brownfield'
+                        : site.siteType === 'construction' ? 'Construction Site'
+                        : 'Vacant Land';
+
+    // Pre-scraped sites have an ArcGIS satellite image URL; stubs use OSM embed
+    let mapContent;
+    if (site.imageUrl) {
+      mapContent = `<img src="${site.imageUrl}" alt="Satellite view of ${site.address}" style="width:100%;height:100%;object-fit:cover;border-radius:8px 8px 0 0;">`;
+    } else {
+      const bbox = `${(site.lng-0.004).toFixed(6)},${(site.lat-0.003).toFixed(6)},${(site.lng+0.004).toFixed(6)},${(site.lat+0.003).toFixed(6)}`;
+      const embedUrl = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${site.lat},${site.lng}`;
+      mapContent = `<iframe src="${embedUrl}" style="width:100%;height:100%;border:none;border-radius:8px 8px 0 0;pointer-events:none;" loading="lazy" title="Map of ${site.address}"></iframe>`;
+    }
+
     const card = document.createElement('div');
     card.className = 'site-card';
     card.dataset.siteIndex = idx;
     card.innerHTML = `
-      <div class="site-card-image">
-        <iframe src="${embedUrl}" style="width:100%;height:100%;border:none;border-radius:8px 8px 0 0;pointer-events:none;" loading="lazy" title="Map of ${site.address}"></iframe>
-      </div>
+      <div class="site-card-image">${mapContent}</div>
       <div class="site-card-content">
         <div class="site-card-title">${site.name}</div>
         <div class="site-card-address">${site.address}</div>

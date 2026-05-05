@@ -25,6 +25,23 @@ CREATE TABLE IF NOT EXISTS generations (
   updatedAt TEXT NOT NULL
 );
 
+-- Pre-scraped sites from Overpass API + ArcGIS satellite images
+-- Populated locally via: node admin/run-scrape.js [city|--all]
+CREATE TABLE IF NOT EXISTS scraped_sites (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  city       TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  address    TEXT,
+  lat        REAL NOT NULL,
+  lng        REAL NOT NULL,
+  site_type  TEXT DEFAULT 'brownfield',
+  area_m2    REAL,
+  image_url  TEXT,
+  source     TEXT DEFAULT 'overpass',
+  scraped_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_scraped_sites_city ON scraped_sites(city);
+
 -- Indexes for faster queries
 CREATE INDEX IF NOT EXISTS idx_sessions_createdAt ON sessions(createdAt);
 CREATE INDEX IF NOT EXISTS idx_sessions_city ON sessions(city);
