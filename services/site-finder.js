@@ -261,19 +261,55 @@ function pseudoRand(seed, index) {
  * @param {number} count  Number of stub sites to generate
  * @returns {Array<SiteResult>}
  */
+// Hardcoded centres for common UK cities — avoids Nominatim call and silent London fallback
+const UK_CITY_COORDS = {
+  london: { lat: 51.5074, lng: -0.1278 },
+  manchester: { lat: 53.4808, lng: -2.2426 },
+  leeds: { lat: 53.8008, lng: -1.5491 },
+  birmingham: { lat: 52.4862, lng: -1.8904 },
+  sheffield: { lat: 53.3811, lng: -1.4701 },
+  bristol: { lat: 51.4545, lng: -2.5879 },
+  liverpool: { lat: 53.4084, lng: -2.9916 },
+  edinburgh: { lat: 55.9533, lng: -3.1883 },
+  glasgow: { lat: 55.8642, lng: -4.2518 },
+  newcastle: { lat: 54.9783, lng: -1.6174 },
+  cardiff: { lat: 51.4816, lng: -3.1791 },
+  nottingham: { lat: 52.9548, lng: -1.1581 },
+  leicester: { lat: 52.6369, lng: -1.1398 },
+  coventry: { lat: 52.4068, lng: -1.5197 },
+  bradford: { lat: 53.7960, lng: -1.7594 },
+  hull: { lat: 53.7457, lng: -0.3367 },
+  stoke: { lat: 53.0027, lng: -2.1794 },
+  derby: { lat: 52.9225, lng: -1.4746 },
+  reading: { lat: 51.4543, lng: -0.9781 },
+  southampton: { lat: 50.9097, lng: -1.4044 },
+  portsmouth: { lat: 50.8198, lng: -1.0880 },
+  oxford: { lat: 51.7520, lng: -1.2577 },
+  cambridge: { lat: 52.2053, lng: 0.1218 },
+  york: { lat: 53.9600, lng: -1.0873 },
+  exeter: { lat: 50.7236, lng: -3.5275 },
+};
+
 async function generateStubSites(city, count = 5) {
   console.log(`[SiteFinder] STUB MODE: Generating ${count} placeholder sites for "${city}"`);
 
-  // Geocode the city centre first (real coordinates for a realistic result)
-  let cityCoords = null;
-  try {
-    cityCoords = await geocodeAddressRateLimited(city + ', UK');
-  } catch {
-    // If geocoding fails, use London as a fallback to avoid null crashes
-  }
+  // Check hardcoded lookup first, then try Nominatim
+  const cityKey = city.trim().toLowerCase().split(/[\s,]+/)[0];
+  let baseLat, baseLng;
 
-  const baseLat = cityCoords?.lat ?? 51.5074;
-  const baseLng = cityCoords?.lng ?? -0.1278;
+  if (UK_CITY_COORDS[cityKey]) {
+    ({ lat: baseLat, lng: baseLng } = UK_CITY_COORDS[cityKey]);
+    console.log(`[SiteFinder] Using hardcoded coords for "${city}"`);
+  } else {
+    let cityCoords = null;
+    try {
+      cityCoords = await geocodeAddressRateLimited(city + ', UK');
+    } catch {
+      // silent — fall through to London default
+    }
+    baseLat = cityCoords?.lat ?? 51.5074;
+    baseLng = cityCoords?.lng ?? -0.1278;
+  }
 
   const sites = [];
   for (let i = 0; i < count; i++) {
