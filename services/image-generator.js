@@ -4,7 +4,8 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 
 const SITE_IMAGES_DIR = path.join(__dirname, '../public/site-images');
-const MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.0-flash-preview-image-generation';
+const MODEL   = process.env.GEMINI_IMAGE_MODEL   || 'gemini-2.5-flash-image';
+const API_VER = process.env.GEMINI_API_VERSION  || 'v1beta';
 
 function ensureDir() {
   if (!fs.existsSync(SITE_IMAGES_DIR)) fs.mkdirSync(SITE_IMAGES_DIR, { recursive: true });
@@ -18,7 +19,7 @@ function geminiRequest(body) {
     const payload = JSON.stringify(body);
     const opts = {
       hostname: 'generativelanguage.googleapis.com',
-      path: `/v1beta/models/${MODEL}:generateContent?key=${key}`,
+      path: `/${API_VER}/models/${MODEL}:generateContent?key=${key}`,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
