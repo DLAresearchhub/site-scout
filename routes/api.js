@@ -262,37 +262,5 @@ async function processGenerationJob(jobId, params) {
   }
 }
 
-/**
- * GET /api/map-thumbnail?lat=&lng=
- * Fetches a single OSM tile server-side to avoid CORS restrictions.
- * Uses tile.openstreetmap.org which is the primary reliable OSM tile CDN.
- */
-router.get('/map-thumbnail', async (req, res) => {
-  const lat = parseFloat(req.query.lat);
-  const lng = parseFloat(req.query.lng);
-  if (isNaN(lat) || isNaN(lng)) return res.status(400).send('Invalid lat/lng');
-
-  const zoom = 16;
-  const n = Math.pow(2, zoom);
-  const x = Math.floor((lng + 180) / 360 * n);
-  const latRad = lat * Math.PI / 180;
-  const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n);
-
-  const url = `https://tile.openstreetmap.org/${zoom}/${x}/${y}.png`;
-
-  try {
-    const response = await fetch(url, {
-      headers: { 'User-Agent': 'SiteScout/1.0 (sitescout@example.com)' }
-    });
-    if (!response.ok) throw new Error(`OSM tile returned ${response.status}`);
-    const buffer = await response.arrayBuffer();
-    res.setHeader('Content-Type', 'image/png');
-    res.setHeader('Cache-Control', 'public, max-age=86400');
-    res.send(Buffer.from(buffer));
-  } catch (e) {
-    console.warn('[MapThumbnail] Failed to fetch OSM tile:', e.message);
-    res.status(502).send('Map unavailable');
-  }
-});
 
 module.exports = router;

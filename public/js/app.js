@@ -96,13 +96,14 @@ function displaySearchResults(sites) {
   container.innerHTML = '';
 
   sites.forEach(site => {
-    const mapUrl = `/api/map-thumbnail?lat=${site.lat}&lng=${site.lng}`;
+    const bbox = `${(site.lng-0.004).toFixed(6)},${(site.lat-0.003).toFixed(6)},${(site.lng+0.004).toFixed(6)},${(site.lat+0.003).toFixed(6)}`;
+    const embedUrl = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${site.lat},${site.lng}`;
     const siteTypeLabel = site.siteType === 'development_site' ? 'Development Site' : 'Vacant Land';
     const card = document.createElement('div');
     card.className = 'site-card';
     card.innerHTML = `
       <div class="site-card-image">
-        <img src="${mapUrl}" alt="Map of ${site.address}" style="width:100%;height:100%;object-fit:cover;border-radius:8px 8px 0 0;" onerror="this.style.display='none';this.parentElement.insertAdjacentHTML('beforeend','<div style=&quot;display:flex;align-items:center;justify-content:center;height:100%;color:#8888aa;font-size:13px;&quot;>📍 ${site.lat.toFixed(4)}, ${site.lng.toFixed(4)}</div>')">
+        <iframe src="${embedUrl}" style="width:100%;height:100%;border:none;border-radius:8px 8px 0 0;pointer-events:none;" loading="lazy" title="Map of ${site.address}"></iframe>
       </div>
       <div class="site-card-content">
         <div class="site-card-title">${site.name}</div>
