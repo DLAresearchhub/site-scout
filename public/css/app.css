@@ -486,6 +486,57 @@ body {
   text-align: right;
 }
 
+/* === CITY CHIPS === */
+.city-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.city-chip {
+  padding: 8px 18px;
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 20px;
+  color: var(--color-muted);
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.city-chip:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+  background-color: rgba(79, 142, 247, 0.08);
+}
+
+.city-chip.active {
+  border-color: var(--color-accent);
+  background-color: rgba(79, 142, 247, 0.15);
+  color: var(--color-accent);
+}
+
+/* === SITES MAP === */
+.sites-map-container {
+  display: none;
+  margin-bottom: 28px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+}
+
+.sites-map {
+  width: 100%;
+  height: 420px;
+}
+
+.site-card.highlighted {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px rgba(79, 142, 247, 0.3);
+}
+
 /* === RESPONSIVE === */
 @media (max-width: 768px) {
   .container {

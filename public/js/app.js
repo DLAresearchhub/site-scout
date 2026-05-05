@@ -13,10 +13,36 @@ const state = {
   jobId: null
 };
 
+let sitesMap = null;
+
+const CITY_CHIPS = [
+  'London', 'Manchester', 'Leeds', 'Birmingham', 'Bristol',
+  'Sheffield', 'Liverpool', 'Edinburgh', 'Glasgow', 'Newcastle',
+  'Nottingham', 'Cardiff', 'Leicester', 'Bradford', 'York'
+];
+
 // Initialize app
 document.addEventListener('DOMContentLoaded', () => {
   attachEventListeners();
+  renderCityChips();
 });
+
+function renderCityChips() {
+  const container = document.getElementById('city-chips');
+  CITY_CHIPS.forEach(city => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'city-chip';
+    chip.textContent = city;
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('.city-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      document.getElementById('city-input').value = city;
+      document.getElementById('search-form').dispatchEvent(new Event('submit'));
+    });
+    container.appendChild(chip);
+  });
+}
 
 /**
  * Attach all event listeners
@@ -95,12 +121,15 @@ function displaySearchResults(sites) {
   const container = document.getElementById('search-results');
   container.innerHTML = '';
 
-  sites.forEach(site => {
+  initSitesMap(sites);
+
+  sites.forEach((site, idx) => {
     const bbox = `${(site.lng-0.004).toFixed(6)},${(site.lat-0.003).toFixed(6)},${(site.lng+0.004).toFixed(6)},${(site.lat+0.003).toFixed(6)}`;
     const embedUrl = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${site.lat},${site.lng}`;
     const siteTypeLabel = site.siteType === 'development_site' ? 'Development Site' : 'Vacant Land';
     const card = document.createElement('div');
     card.className = 'site-card';
+    card.dataset.siteIndex = idx;
     card.innerHTML = `
       <div class="site-card-image">
         <iframe src="${embedUrl}" style="width:100%;height:100%;border:none;border-radius:8px 8px 0 0;pointer-events:none;" loading="lazy" title="Map of ${site.address}"></iframe>
@@ -116,6 +145,52 @@ function displaySearchResults(sites) {
     `;
     container.appendChild(card);
   });
+}
+
+/**
+ * Initialise satellite overview map with all sites as markers
+ */
+function initSitesMap(sites) {
+  const container = document.getElementById('sites-map-container');
+  container.style.display = 'block';
+
+  if (sitesMap) {
+    sitesMap.remove();
+    sitesMap = null;
+  }
+
+  sitesMap = L.map('sites-map', { zoomControl: true, attributionControl: true });
+
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: 'Tiles &copy; Esri',
+    maxZoom: 19
+  }).addTo(sitesMap);
+
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 19,
+    opacity: 0.8
+  }).addTo(sitesMap);
+
+  const bounds = [];
+
+  sites.forEach((site, idx) => {
+    const marker = L.marker([site.lat, site.lng]);
+    marker.bindPopup(`<strong>${site.name}</strong><br><small>${site.address}</small>`, { maxWidth: 220 });
+    marker.addTo(sitesMap);
+    marker.on('click', () => {
+      const card = document.querySelector(`[data-site-index="${idx}"]`);
+      if (card) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        card.classList.add('highlighted');
+        setTimeout(() => card.classList.remove('highlighted'), 1800);
+      }
+    });
+    bounds.push([site.lat, site.lng]);
+  });
+
+  if (bounds.length > 0) {
+    sitesMap.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+  }
 }
 
 /**
@@ -411,6 +486,13 @@ function resetApp() {
   document.getElementById('style-notes').value = '';
   document.getElementById('include-interiors').checked = true;
   document.getElementById('search-results').innerHTML = '';
+  document.getElementById('sites-map-container').style.display = 'none';
+  document.querySelectorAll('.city-chip').forEach(c => c.classList.remove('active'));
+
+  if (sitesMap) {
+    sitesMap.remove();
+    sitesMap = null;
+  }
 
   goToStep(1);
 }
