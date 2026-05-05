@@ -79,16 +79,20 @@ function buildOverpassQuery(bbox) {
   const [s, w, n, e] = bbox;
   const b = `${s},${w},${n},${e}`;
   return `
-[out:json][timeout:30];
+[out:json][timeout:45];
 (
   way["landuse"="brownfield"](${b});
   way["landuse"="construction"](${b});
   way["landuse"="vacant"](${b});
   way["landuse"="landfill"](${b});
+  way["landuse"="railway"](${b});
+  way["landuse"="industrial"](${b});
   way["abandoned:building"](${b});
   way["disused:landuse"](${b});
+  way["building"="abandoned"](${b});
+  way["site"="brownfield"](${b});
 );
-out center 25;
+out center 40;
   `.trim();
 }
 
@@ -119,33 +123,60 @@ async function queryOverpass(bbox) {
 /**
  * Convert Overpass elements into normalised site objects.
  */
+// Counter per city for unique fallback names
+const _nameCounters = {};
+
 function parseElements(elements, cityName) {
+  _nameCounters[cityName] = {};
+
   return elements
     .filter(el => el.center?.lat && el.center?.lon)
     .map(el => {
       const tags = el.tags || {};
-      const streetParts = [
-        tags['addr:housenumber'],
-        tags['addr:street'],
-        tags['addr:city'] || cityName,
-      ].filter(Boolean);
 
       const siteType = tags.landuse
-        || tags['abandoned:building'] && 'abandoned_building'
+        || (tags['abandoned:building'] ? 'abandoned_building' : null)
         || tags['disused:landuse']
+        || tags['building'] === 'abandoned' ? 'abandoned_building' : null
         || 'brownfield';
 
-      const name = tags.name
-        || (tags['addr:street'] ? `${tags['addr:street']} Site` : null)
-        || `${capitalise(siteType.replace(/_/g, ' '))} Site`;
+      // Build the best possible name from OSM tags
+      let name = tags.name || null;
+
+      if (!name && tags['addr:street'] && tags['addr:housenumber']) {
+        name = `${tags['addr:housenumber']} ${tags['addr:street']}`;
+      } else if (!name && tags['addr:street']) {
+        name = `${tags['addr:street']} Site`;
+      } else if (!name && tags['ref']) {
+        name = `Site ${tags['ref']}`;
+      }
+
+      // Fallback: type-based name with counter to avoid duplicates
+      if (!name) {
+        const typeLabel = capitalise((siteType || 'brownfield').replace(/_/g, ' '));
+        _nameCounters[cityName][typeLabel] = (_nameCounters[cityName][typeLabel] || 0) + 1;
+        const n = _nameCounters[cityName][typeLabel];
+        name = n === 1 ? `${typeLabel} Site` : `${typeLabel} Site ${n}`;
+      }
+
+      const addressParts = [
+        tags['addr:housenumber'],
+        tags['addr:street'],
+        tags['addr:suburb'],
+        cityName,
+      ].filter(Boolean);
+
+      const address = addressParts.length > 1
+        ? addressParts.join(', ')
+        : `${name}, ${cityName}`;
 
       return {
         city: cityName.toLowerCase(),
         name,
-        address: streetParts.length > 1 ? streetParts.join(', ') : `${name}, ${cityName}`,
+        address,
         lat: el.center.lat,
         lng: el.center.lon,
-        site_type: siteType,
+        site_type: siteType || 'brownfield',
         area_m2: null,
         source: 'overpass',
       };
@@ -206,8 +237,8 @@ async function scrapeCity(cityName, db) {
     return 0;
   }
 
-  // Keep up to 15 sites per city, spread across the bbox
-  const toStore = sites.slice(0, 15);
+  // Keep up to 20 sites per city
+  const toStore = sites.slice(0, 20);
 
   // Clear existing entries for this city
   db.prepare('DELETE FROM scraped_sites WHERE city = ?').run(key);

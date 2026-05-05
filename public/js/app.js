@@ -235,12 +235,13 @@ function renderCaptureGrid(captures) {
     card.className = 'capture-card';
     card.dataset.captureId = capture.id;
 
-    const typeClass = capture.type === 'satellite' ? 'satellite' : capture.type === 'birdseye' ? 'birdseye' : 'streetview';
-    const typeText = capture.type === 'satellite' ? 'Satellite' : capture.type === 'birdseye' ? "Bird's Eye" : 'Street';
+    const typeClass = { satellite: 'satellite', mapbox3d: 'mapbox3d', birdseye: 'birdseye', streetview: 'streetview' }[capture.type] || 'satellite';
+    const typeText  = { satellite: 'Satellite', mapbox3d: '3D View', birdseye: "Bird's Eye", streetview: 'Street' }[capture.type] || capture.type;
+
+    const errorSvg = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='140'%3E%3Crect fill='%23f1f1f1' width='200' height='140'/%3E%3Ctext x='100' y='75' text-anchor='middle' fill='%236b7280' font-size='12'%3ENo image%3C/text%3E%3C/svg%3E`;
 
     card.innerHTML = `
-      <img src="${capture.proxyUrl}" alt="${capture.label}" loading="lazy"
-           onerror="this.src='data:image/svg+xml,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'200\\' height=\\'140\\'><rect fill=\\'%23f1f1f1\\' width=\\'200\\' height=\\'140\\'/><text x=\\'100\\' y=\\'75\\' text-anchor=\\'middle\\' fill=\\'%236b7280\\' font-size=\\'12\\'>No image</text></svg>'">
+      <img src="${capture.proxyUrl}" alt="${capture.label}" loading="lazy" onerror="this.src='${errorSvg}'">
       <div class="capture-card-label">
         <span>${capture.label || typeText}</span>
         <span class="capture-type-badge ${typeClass}">${typeText}</span>
@@ -252,8 +253,16 @@ function renderCaptureGrid(captures) {
   });
 
   grid.style.display = 'grid';
-  document.getElementById('capture-instructions').style.display = 'block';
   document.getElementById('step2-actions').style.display = 'flex';
+
+  // Auto-select if only one capture, or auto-select the first 3D view if available
+  const best = captures.find(c => c.type === 'mapbox3d') || captures[0];
+  if (best) {
+    const bestCard = grid.querySelector(`[data-capture-id="${best.id}"]`);
+    if (bestCard) selectCapture(best, bestCard);
+    // Only show "select a view" hint if there's more than one
+    document.getElementById('capture-instructions').style.display = captures.length > 1 ? 'block' : 'none';
+  }
 }
 
 function selectCapture(capture, cardEl) {
