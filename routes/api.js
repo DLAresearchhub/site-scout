@@ -262,4 +262,28 @@ async function processGenerationJob(jobId, params) {
   }
 }
 
+/**
+ * GET /api/map-thumbnail?lat=&lng=
+ * Proxies OSM static map server-side to avoid CORS restrictions
+ */
+router.get('/map-thumbnail', async (req, res) => {
+  const { lat, lng } = req.query;
+  if (!lat || !lng) return res.status(400).send('Missing lat/lng');
+
+  try {
+    const url = `https://staticmap.openstreetmap.de/staticmap.php?center=${lat},${lng}&zoom=17&size=400x200&maptype=mapnik&markers=${lat},${lng},red`;
+    const response = await fetch(url, {
+      headers: { 'User-Agent': 'SiteScout/1.0 (sitescout@example.com)' }
+    });
+    if (!response.ok) throw new Error(`OSM returned ${response.status}`);
+    const buffer = await response.arrayBuffer();
+    res.setHeader('Content-Type', response.headers.get('content-type') || 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(Buffer.from(buffer));
+  } catch (e) {
+    console.warn('[MapThumbnail] Failed to fetch OSM static map:', e.message);
+    res.status(502).send('Map unavailable');
+  }
+});
+
 module.exports = router;

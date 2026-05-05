@@ -96,7 +96,7 @@ function displaySearchResults(sites) {
   container.innerHTML = '';
 
   sites.forEach(site => {
-    const mapUrl = `https://staticmap.openstreetmap.de/staticmap.php?center=${site.lat},${site.lng}&zoom=17&size=400x200&maptype=mapnik&markers=${site.lat},${site.lng},red`;
+    const mapUrl = `/api/map-thumbnail?lat=${site.lat}&lng=${site.lng}`;
     const siteTypeLabel = site.siteType === 'development_site' ? 'Development Site' : 'Vacant Land';
     const card = document.createElement('div');
     card.className = 'site-card';
