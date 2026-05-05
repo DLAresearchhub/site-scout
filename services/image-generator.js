@@ -1,145 +1,105 @@
-/**
- * Image Generator Service
- * Generates images using Google Gemini API
- * TODO: Replace placeholder implementation with actual Gemini API calls
- */
+const https = require('https');
+const fs = require('fs');
+const path = require('path');
+const { v4: uuidv4 } = require('uuid');
 
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const SITE_IMAGES_DIR = path.join(__dirname, '../public/site-images');
+const MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.0-flash-preview-image-generation';
 
-// Initialize Gemini client (will be null if API key not set)
-let geminiClient = null;
-
-try {
-  if (process.env.GEMINI_API_KEY) {
-    geminiClient = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  }
-} catch (error) {
-  console.warn('Gemini API not initialized:', error.message);
+function ensureDir() {
+  if (!fs.existsSync(SITE_IMAGES_DIR)) fs.mkdirSync(SITE_IMAGES_DIR, { recursive: true });
 }
 
-/**
- * Generate an image using Gemini API
- * @param {string} prompt - Detailed prompt for image generation
- * @param {string} referenceImageUrl - Reference image URL or base64
- * @returns {Promise<string>} Generated image URL or placeholder
- */
-async function generateImage(prompt, referenceImageUrl) {
-  try {
-    // TODO: Implement actual Gemini image generation
-    // For now, return a placeholder image URL that represents the generation
+function geminiRequest(body) {
+  return new Promise((resolve, reject) => {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) return reject(new Error('GEMINI_API_KEY not set'));
 
-    if (!geminiClient) {
-      console.log('Gemini API not configured. Using placeholder images.');
-      return generatePlaceholderImage(prompt);
-    }
+    const payload = JSON.stringify(body);
+    const opts = {
+      hostname: 'generativelanguage.googleapis.com',
+      path: `/v1beta/models/${MODEL}:generateContent?key=${key}`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+      },
+    };
 
-    // TODO: Uncomment when Gemini image generation is available
-    /*
-    const model = geminiClient.getGenerativeModel({ model: 'gemini-pro-vision' });
-    
-    const response = await model.generateContent([
-      prompt,
-      {
-        inlineData: {
-          mimeType: 'image/jpeg',
-          data: referenceImageUrl
+    const req = https.request(opts, res => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString();
+        if (res.statusCode !== 200) {
+          return reject(new Error(`Gemini API error ${res.statusCode}: ${text.slice(0, 300)}`));
         }
+        try {
+          resolve(JSON.parse(text));
+        } catch {
+          reject(new Error(`Failed to parse Gemini response: ${text.slice(0, 200)}`));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
+function extractImageFromResponse(response) {
+  const parts = response?.candidates?.[0]?.content?.parts;
+  if (!parts) return null;
+  for (const part of parts) {
+    if (part.inlineData && part.inlineData.data) {
+      return { data: part.inlineData.data, mimeType: part.inlineData.mimeType || 'image/jpeg' };
+    }
+  }
+  return null;
+}
+
+async function generateFromCapture(captureBase64, captureMimeType, prompt, referenceImages = []) {
+  ensureDir();
+
+  const parts = [
+    { text: prompt },
+    { inlineData: { mimeType: captureMimeType || 'image/jpeg', data: captureBase64 } },
+  ];
+
+  // Append any reference images (style/material inspiration)
+  if (referenceImages && referenceImages.length > 0) {
+    for (const ref of referenceImages.slice(0, 5)) {
+      if (ref && ref.data) {
+        parts.push({ inlineData: { mimeType: ref.mimeType || 'image/jpeg', data: ref.data } });
       }
-    ]);
-
-    const result = await response.response;
-    return result.text(); // Would contain the generated image URL
-    */
-
-    // Stub implementation
-    return generatePlaceholderImage(prompt);
-  } catch (error) {
-    console.error('Error generating image:', error);
-    return generatePlaceholderImage(prompt);
-  }
-}
-
-/**
- * Generate a placeholder image (SVG data URI)
- * In production, this would be replaced with actual generated images
- * @param {string} prompt - The prompt that would generate this image
- * @returns {string} SVG data URI representing the image
- */
-function generatePlaceholderImage(prompt) {
-  // Extract image type from prompt
-  const imageType = prompt.includes('aerial') || prompt.includes('drone') 
-    ? 'Aerial View'
-    : prompt.includes('street') || prompt.includes('street-level')
-    ? 'Street View'
-    : 'Interior View';
-
-  // Create a colored placeholder based on image type
-  let bgColor = '#2a2a3a'; // Default border color
-  let textColor = '#4f8ef7'; // Accent blue
-  let typeColor = '#4caf87'; // Success green
-
-  if (imageType === 'Street View') {
-    bgColor = '#1a1a2e';
-    textColor = '#4f8ef7';
-  } else if (imageType === 'Interior View') {
-    bgColor = '#0f1a1a';
-    textColor = '#ffa500';
+    }
   }
 
-  const svg = `
-    <svg xmlns='http://www.w3.org/2000/svg' width='1920' height='1080' viewBox='0 0 1920 1080'>
-      <defs>
-        <linearGradient id='grad' x1='0%' y1='0%' x2='100%' y2='100%'>
-          <stop offset='0%' style='stop-color:${bgColor};stop-opacity:1' />
-          <stop offset='100%' style='stop-color:#13131a;stop-opacity:1' />
-        </linearGradient>
-      </defs>
-      <rect width='1920' height='1080' fill='url(#grad)'/>
-      <rect x='100' y='100' width='1720' height='880' fill='none' stroke='${textColor}' stroke-width='2' rx='12'/>
-      <text x='960' y='400' text-anchor='middle' fill='${typeColor}' font-size='48' font-weight='bold' font-family='system-ui'>
-        ${imageType}
-      </text>
-      <text x='960' y='500' text-anchor='middle' fill='${textColor}' font-size='18' font-family='system-ui' opacity='0.7'>
-        Generated by Gemini
-      </text>
-      <text x='960' y='700' text-anchor='middle' fill='#8888aa' font-size='14' font-family='monospace' opacity='0.5'>
-        [Placeholder - Awaiting Gemini API Implementation]
-      </text>
-    </svg>
-  `;
+  const body = {
+    contents: [{ parts }],
+    generationConfig: { responseModalities: ['IMAGE', 'TEXT'] },
+  };
 
-  return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
-}
+  const response = await geminiRequest(body);
+  const image = extractImageFromResponse(response);
 
-/**
- * Batch generate multiple images
- * @param {Array} prompts - Array of prompts
- * @param {string} referenceImage - Reference image for all
- * @returns {Promise<Array>} Array of generated image URLs
- */
-async function generateImageBatch(prompts, referenceImage) {
-  try {
-    const images = await Promise.all(
-      prompts.map(prompt => generateImage(prompt, referenceImage))
-    );
-    return images;
-  } catch (error) {
-    console.error('Error in batch generation:', error);
-    throw error;
+  if (!image) {
+    // Log what Gemini returned for debugging
+    const textParts = response?.candidates?.[0]?.content?.parts?.filter(p => p.text) || [];
+    const msg = textParts.map(p => p.text).join(' ') || 'No image in response';
+    throw new Error(`Gemini did not return an image. Response: ${msg.slice(0, 200)}`);
   }
+
+  const ext = image.mimeType.includes('png') ? 'png' : 'jpg';
+  const filename = `gen-${uuidv4()}.${ext}`;
+  const filePath = path.join(SITE_IMAGES_DIR, filename);
+  fs.writeFileSync(filePath, Buffer.from(image.data, 'base64'));
+
+  return `/site-images/${filename}`;
 }
 
-/**
- * Check Gemini API availability
- * @returns {boolean} Whether Gemini API is configured
- */
-function isGeminiConfigured() {
-  return !!geminiClient && !!process.env.GEMINI_API_KEY;
+function isConfigured() {
+  return !!process.env.GEMINI_API_KEY;
 }
 
-module.exports = {
-  generateImage,
-  generateImageBatch,
-  isGeminiConfigured,
-  generatePlaceholderImage
-};
+module.exports = { generateFromCapture, isConfigured };

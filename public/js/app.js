@@ -1,508 +1,566 @@
-/**
- * Site Scout - Main App JavaScript
- * Handles all UI interactions and API calls
- */
+'use strict';
 
-// State management
+// ── State ─────────────────────────────────────────────────────────────────
+
 const state = {
   currentStep: 1,
   selectedSite: null,
-  selectedCapture: null,
+  selectedCapture: null,   // { id, proxyUrl, type, direction, label }
   currentCity: null,
+  jobId: null,
+  user: null,
+  referenceImages: [],     // [{ dataUrl, data (base64), mimeType }]
   generationCount: 0,
-  jobId: null
+  overviewMap: null,
 };
 
-let sitesMap = null;
+// ── Init ──────────────────────────────────────────────────────────────────
 
-const CITY_CHIPS = [
-  'London', 'Manchester', 'Leeds', 'Birmingham', 'Bristol',
-  'Sheffield', 'Liverpool', 'Edinburgh', 'Glasgow', 'Newcastle',
-  'Nottingham', 'Cardiff', 'Leicester', 'Bradford', 'York'
-];
-
-// Initialize app
 document.addEventListener('DOMContentLoaded', () => {
-  attachEventListeners();
-  renderCityChips();
+  // Init pill UI
+  const pillContainer = document.getElementById('pill-rows-container');
+  window.PromptBuilder.initPillUI(pillContainer, onPillStateChange);
+
+  // Load user/credits
+  fetch('/api/me').then(r => r.json()).then(data => {
+    state.user = data.authenticated ? data.user : null;
+    updateCreditDisplay(data.credits, data.authenticated);
+  }).catch(() => {});
+
+  // Check OAuth redirect result
+  const params = new URLSearchParams(location.search);
+  if (params.get('auth') === 'success') {
+    history.replaceState({}, '', '/');
+  }
 });
 
-function renderCityChips() {
-  const container = document.getElementById('city-chips');
-  CITY_CHIPS.forEach(city => {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'city-chip';
-    chip.textContent = city;
-    chip.addEventListener('click', () => {
-      document.querySelectorAll('.city-chip').forEach(c => c.classList.remove('active'));
-      chip.classList.add('active');
-      document.getElementById('city-input').value = city;
-      document.getElementById('search-form').dispatchEvent(new Event('submit'));
-    });
-    container.appendChild(chip);
+// ── Auth ──────────────────────────────────────────────────────────────────
+
+function handleAuthClick() {
+  if (state.user) {
+    fetch('/auth/logout', { method: 'POST' }).then(() => location.reload());
+  } else {
+    location.href = '/auth/google';
+  }
+}
+
+function updateCreditDisplay(credits, authenticated) {
+  const display = document.getElementById('credit-display');
+  const count = document.getElementById('credit-count');
+  const btn = document.getElementById('auth-btn');
+
+  if (credits !== undefined) {
+    display.style.display = 'flex';
+    count.textContent = credits;
+  }
+
+  if (authenticated && state.user) {
+    btn.textContent = 'Sign out';
+  }
+}
+
+// ── Navigation ────────────────────────────────────────────────────────────
+
+function goToStep(n) {
+  document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+  document.getElementById(`step-${n}`).classList.add('active');
+  state.currentStep = n;
+
+  // Step indicator
+  const indicator = document.getElementById('step-indicator');
+  indicator.style.display = n > 1 ? 'flex' : 'none';
+  document.querySelectorAll('.step-pip').forEach(pip => {
+    const s = parseInt(pip.dataset.step);
+    pip.classList.remove('active', 'done');
+    if (s === n) pip.classList.add('active');
+    else if (s < n) pip.classList.add('done');
   });
-}
 
-/**
- * Attach all event listeners
- */
-function attachEventListeners() {
-  // Step 1: Search form
-  document.getElementById('search-form').addEventListener('submit', handleSearch);
-
-  // Step 2: Earth controls
-  document.getElementById('rotate-left').addEventListener('click', () => rotateView(-45));
-  document.getElementById('rotate-right').addEventListener('click', () => rotateView(45));
-  document.getElementById('rotate-all').addEventListener('click', rotateAll);
-  document.getElementById('capture-btn').addEventListener('click', captureSite);
-  document.getElementById('use-view-btn').addEventListener('click', () => goToStep(3));
-
-  // Step 3: Config form
-  document.getElementById('config-form').addEventListener('submit', handleGenerate);
-
-  // Step 5: Results
-  document.getElementById('new-search-btn').addEventListener('click', resetApp);
-}
-
-/**
- * Step management
- */
-function goToStep(step) {
-  // Hide all steps
-  document.querySelectorAll('.step').forEach(el => el.classList.remove('active'));
-
-  // Show target step
-  document.getElementById(`step-${step}`).classList.add('active');
-
-  state.currentStep = step;
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-/**
- * Step 1: Handle city search
- */
-async function handleSearch(e) {
-  e.preventDefault();
+// ── Step 1: Search ────────────────────────────────────────────────────────
 
-  const city = document.getElementById('city-input').value.trim();
-  if (!city) return;
-
-  const btn = document.querySelector('#search-form button');
-  btn.disabled = true;
-  btn.textContent = 'Searching...';
-
-  try {
-    const response = await fetch('/api/search-sites', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ city })
-    });
-
-    if (!response.ok) throw new Error('Search failed');
-
-    const data = await response.json();
-    state.currentCity = city;
-
-    displaySearchResults(data.sites);
-  } catch (error) {
-    console.error('Search error:', error);
-    alert('Failed to search sites. Please try again.');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Search';
-  }
+function quickSearch(city) {
+  document.getElementById('city-input').value = city;
+  searchCity(city);
 }
 
-/**
- * Display search results as cards
- */
-function displaySearchResults(sites) {
-  const container = document.getElementById('search-results');
-  container.innerHTML = '';
+function handleSearch(e) {
+  e.preventDefault();
+  const city = document.getElementById('city-input').value.trim();
+  if (city) searchCity(city);
+}
 
-  initSitesMap(sites);
+async function searchCity(city) {
+  state.currentCity = city;
+  document.getElementById('search-loading').style.display = 'flex';
+  document.getElementById('site-results').innerHTML = '';
+  document.getElementById('overview-map-wrap').style.display = 'none';
 
-  sites.forEach((site, idx) => {
-    const siteTypeLabel = site.siteType === 'development_site' ? 'Development Site'
-                        : site.siteType === 'brownfield' ? 'Brownfield'
-                        : site.siteType === 'construction' ? 'Construction Site'
-                        : 'Vacant Land';
+  try {
+    const res = await fetch('/api/search-sites', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ city }),
+    });
+    const data = await res.json();
+    document.getElementById('search-loading').style.display = 'none';
 
-    // Pre-scraped sites have an ArcGIS satellite image URL; stubs use OSM embed
-    let mapContent;
-    if (site.imageUrl) {
-      mapContent = `<img src="${site.imageUrl}" alt="Satellite view of ${site.address}" style="width:100%;height:100%;object-fit:cover;border-radius:8px 8px 0 0;">`;
-    } else {
-      const bbox = `${(site.lng-0.004).toFixed(6)},${(site.lat-0.003).toFixed(6)},${(site.lng+0.004).toFixed(6)},${(site.lat+0.003).toFixed(6)}`;
-      const embedUrl = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${site.lat},${site.lng}`;
-      mapContent = `<iframe src="${embedUrl}" style="width:100%;height:100%;border:none;border-radius:8px 8px 0 0;pointer-events:none;" loading="lazy" title="Map of ${site.address}"></iframe>`;
+    if (!data.sites || data.sites.length === 0) {
+      document.getElementById('site-results').innerHTML = '<p class="empty-msg">No sites found for this city. Try another.</p>';
+      return;
     }
 
-    const card = document.createElement('div');
-    card.className = 'site-card';
-    card.dataset.siteIndex = idx;
-    card.innerHTML = `
-      <div class="site-card-image">${mapContent}</div>
-      <div class="site-card-content">
-        <div class="site-card-title">${site.name}</div>
-        <div class="site-card-address">${site.address}</div>
-        <div class="site-card-type">${siteTypeLabel}</div>
-        <button class="btn btn-primary" onclick="selectSite(${JSON.stringify(site).replace(/"/g, '&quot;')})">
-          Scout This Site
-        </button>
-      </div>
-    `;
-    container.appendChild(card);
-  });
+    renderOverviewMap(data.sites);
+    renderSiteGrid(data.sites);
+  } catch {
+    document.getElementById('search-loading').style.display = 'none';
+    document.getElementById('site-results').innerHTML = '<p class="empty-msg">Search failed. Please try again.</p>';
+  }
 }
 
-/**
- * Initialise satellite overview map with all sites as markers
- */
-function initSitesMap(sites) {
-  const container = document.getElementById('sites-map-container');
-  container.style.display = 'block';
+function renderOverviewMap(sites) {
+  const wrap = document.getElementById('overview-map-wrap');
+  wrap.style.display = 'block';
 
-  if (sitesMap) {
-    sitesMap.remove();
-    sitesMap = null;
+  if (state.overviewMap) {
+    state.overviewMap.remove();
+    state.overviewMap = null;
   }
 
-  sitesMap = L.map('sites-map', { zoomControl: true, attributionControl: true });
+  const validSites = sites.filter(s => s.lat && s.lng);
+  if (!validSites.length) return;
 
-  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  const map = window.L.map('overview-map', { zoomControl: true });
+  state.overviewMap = map;
+
+  window.L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
     attribution: 'Tiles &copy; Esri',
-    maxZoom: 19
-  }).addTo(sitesMap);
-
-  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 19,
-    opacity: 0.8
-  }).addTo(sitesMap);
+  }).addTo(map);
 
   const bounds = [];
-
-  sites.forEach((site, idx) => {
-    const marker = L.marker([site.lat, site.lng]);
-    marker.bindPopup(`<strong>${site.name}</strong><br><small>${site.address}</small>`, { maxWidth: 220 });
-    marker.addTo(sitesMap);
-    marker.on('click', () => {
-      const card = document.querySelector(`[data-site-index="${idx}"]`);
-      if (card) {
-        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        card.classList.add('highlighted');
-        setTimeout(() => card.classList.remove('highlighted'), 1800);
-      }
-    });
+  validSites.forEach(site => {
     bounds.push([site.lat, site.lng]);
+    const marker = window.L.circleMarker([site.lat, site.lng], {
+      radius: 8, fillColor: '#f97316', color: '#fff', weight: 2, fillOpacity: 0.9,
+    }).addTo(map);
+    marker.bindPopup(`<strong>${site.name}</strong><br>${site.address || ''}`);
   });
 
-  if (bounds.length > 0) {
-    sitesMap.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
-  }
+  map.fitBounds(bounds, { padding: [30, 30] });
 }
 
-/**
- * Select a site and move to Earth view
- */
-function selectSite(site) {
-  state.selectedSite = site;
-  document.getElementById('site-description').textContent = 
-    `${site.name} • ${site.address}`;
-  goToStep(2);
-  loadEarthView(site);
-}
+function renderSiteGrid(sites) {
+  const grid = document.getElementById('site-results');
+  grid.innerHTML = '';
 
-/**
- * Load Earth view with placeholder
- */
-function loadEarthView(site) {
-  const earthView = document.getElementById('earth-view');
-  earthView.innerHTML = `
-    <img src="${generatePlaceholderEarthImage(site.lat, site.lng)}" alt="Earth View">
-  `;
+  sites.forEach(site => {
+    const card = document.createElement('div');
+    card.className = 'site-card';
 
-  // Load capture thumbnails
-  loadCaptures(site);
-}
+    const siteType = site.siteType || site.site_type || 'brownfield';
+    const badgeClass = siteType.includes('vacant') ? 'vacant' : 'brownfield';
+    const badgeText = siteType.replace(/_/g, ' ');
 
-/**
- * Generate Earth placeholder
- */
-function generatePlaceholderEarthImage(lat, lng) {
-  return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='500'%3E%3Cdefs%3E%3ClinearGradient id='grad' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%231a1a2a;stop-opacity:1'/%3E%3Cstop offset='100%25' style='stop-color:%230f1a1a;stop-opacity:1'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='800' height='500' fill='url(%23grad)'/%3E%3Ccircle cx='300' cy='150' r='80' fill='%234f8ef7' opacity='0.3'/%3E%3Ccircle cx='500' cy='250' r='100' fill='%234caf87' opacity='0.2'/%3E%3Ctext x='400' y='250' text-anchor='middle' fill='%238888aa' font-size='18'%3EGoogle Earth View%3C/text%3E%3Ctext x='400' y='280' text-anchor='middle' fill='%238888aa' font-size='12'%3E${lat.toFixed(4)}, ${lng.toFixed(4)}%3C/text%3E%3C/svg%3E`;
-}
+    // Image / map embed
+    let mediaHtml = '';
+    if (site.imageUrl || site.image_url) {
+      mediaHtml = `<img class="site-card-img" src="${site.imageUrl || site.image_url}" alt="${site.name}" loading="lazy" onerror="this.style.display='none'">`;
+    } else if (site.lat && site.lng) {
+      const osmUrl = `https://www.openstreetmap.org/export/embed.html?bbox=${site.lng - 0.005},${site.lat - 0.005},${site.lng + 0.005},${site.lat + 0.005}&layer=mapnik&marker=${site.lat},${site.lng}`;
+      mediaHtml = `<iframe class="site-card-iframe" src="${osmUrl}" title="Map" loading="lazy"></iframe>`;
+    }
 
-/**
- * Load capture thumbnails
- */
-async function loadCaptures(site) {
-  try {
-    const response = await fetch('/api/capture-site', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        site_id: site.id,
-        lat: site.lat,
-        lng: site.lng
-      })
-    });
-
-    if (!response.ok) throw new Error('Capture failed');
-
-    const data = await response.json();
-    displayCaptures(data.captures);
-  } catch (error) {
-    console.error('Capture error:', error);
-    // Continue anyway with placeholder captures
-    const placeholders = [
-      { angle: 0, screenshot_url: '' },
-      { angle: 45, screenshot_url: '' },
-      { angle: 90, screenshot_url: '' }
-    ];
-    displayCaptures(placeholders);
-  }
-}
-
-/**
- * Display capture thumbnails
- */
-function displayCaptures(captures) {
-  const strip = document.getElementById('captures-strip');
-  strip.innerHTML = '';
-
-  captures.slice(0, 6).forEach((capture, idx) => {
-    const thumb = document.createElement('div');
-    thumb.className = `capture-thumb ${idx === 0 ? 'selected' : ''}`;
-    thumb.onclick = () => selectCapture(capture, thumb);
-    thumb.innerHTML = `
-      <div style="width:100%; height:100%; background:linear-gradient(135deg, #2a2a3a 0%, #1a1a2a 100%); display:flex; align-items:center; justify-content:center; color:#888; font-size:12px;">
-        ${capture.angle}°
+    card.innerHTML = `
+      ${mediaHtml}
+      <div class="site-card-body">
+        <div class="site-card-name" title="${site.name}">${site.name}</div>
+        <div class="site-card-address">${site.address || site.city || ''}</div>
+        <div class="site-card-meta">
+          <span class="site-badge ${badgeClass}">${badgeText}</span>
+          ${site.areaM2 || site.area_m2 ? `<span class="site-badge">${Math.round((site.areaM2 || site.area_m2) / 10) / 100} ha</span>` : ''}
+        </div>
+      </div>
+      <div class="site-card-footer">
+        <button class="btn-primary" onclick="selectSite(${JSON.stringify(site).replace(/"/g, '&quot;')})">Scout This Site</button>
       </div>
     `;
-    strip.appendChild(thumb);
-  });
 
-  if (captures.length > 0) {
-    state.selectedCapture = captures[0];
+    grid.appendChild(card);
+  });
+}
+
+// ── Step 2: Captures ──────────────────────────────────────────────────────
+
+async function selectSite(site) {
+  state.selectedSite = site;
+  state.selectedCapture = null;
+
+  document.getElementById('step2-site-name').textContent = `${site.name}${site.address ? ' — ' + site.address : ''}`;
+  document.getElementById('capture-loading').style.display = 'flex';
+  document.getElementById('capture-grid').style.display = 'none';
+  document.getElementById('capture-none').style.display = 'none';
+  document.getElementById('step2-actions').style.display = 'none';
+  document.getElementById('capture-instructions').style.display = 'none';
+  goToStep(2);
+
+  try {
+    const res = await fetch('/api/capture-site', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ site_id: site.id || site.name, lat: site.lat, lng: site.lng }),
+    });
+    const data = await res.json();
+    document.getElementById('capture-loading').style.display = 'none';
+
+    if (!data.captures || data.captures.length === 0) {
+      document.getElementById('capture-none').style.display = 'block';
+    } else {
+      renderCaptureGrid(data.captures);
+    }
+  } catch {
+    document.getElementById('capture-loading').style.display = 'none';
+    document.getElementById('capture-none').style.display = 'block';
   }
 }
 
-/**
- * Select capture
- */
-function selectCapture(capture, element) {
-  document.querySelectorAll('.capture-thumb').forEach(el => el.classList.remove('selected'));
-  element.classList.add('selected');
+function renderCaptureGrid(captures) {
+  const grid = document.getElementById('capture-grid');
+  grid.innerHTML = '';
+
+  captures.forEach(capture => {
+    const card = document.createElement('div');
+    card.className = 'capture-card';
+    card.dataset.captureId = capture.id;
+
+    const typeClass = capture.type === 'satellite' ? 'satellite' : capture.type === 'birdseye' ? 'birdseye' : 'streetview';
+    const typeText = capture.type === 'satellite' ? 'Satellite' : capture.type === 'birdseye' ? "Bird's Eye" : 'Street';
+
+    card.innerHTML = `
+      <img src="${capture.proxyUrl}" alt="${capture.label}" loading="lazy"
+           onerror="this.src='data:image/svg+xml,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'200\\' height=\\'140\\'><rect fill=\\'%23f1f1f1\\' width=\\'200\\' height=\\'140\\'/><text x=\\'100\\' y=\\'75\\' text-anchor=\\'middle\\' fill=\\'%236b7280\\' font-size=\\'12\\'>No image</text></svg>'">
+      <div class="capture-card-label">
+        <span>${capture.label || typeText}</span>
+        <span class="capture-type-badge ${typeClass}">${typeText}</span>
+      </div>
+    `;
+
+    card.addEventListener('click', () => selectCapture(capture, card));
+    grid.appendChild(card);
+  });
+
+  grid.style.display = 'grid';
+  document.getElementById('capture-instructions').style.display = 'block';
+  document.getElementById('step2-actions').style.display = 'flex';
+}
+
+function selectCapture(capture, cardEl) {
+  document.querySelectorAll('.capture-card').forEach(c => c.classList.remove('selected'));
+  cardEl.classList.add('selected');
   state.selectedCapture = capture;
+  document.getElementById('selected-capture-label').textContent = capture.label || capture.type;
+  document.getElementById('configure-btn').disabled = false;
 }
 
-/**
- * Rotate view (stub)
- */
-function rotateView(degrees) {
-  console.log(`Rotating ${degrees} degrees`);
-  alert(`View rotated ${degrees}° (stub implementation)`);
+// ── Step 3: Design ────────────────────────────────────────────────────────
+
+function selectBuildingType(btn) {
+  document.querySelectorAll('.building-tile').forEach(t => t.classList.remove('selected'));
+  btn.classList.add('selected');
+  window.PromptBuilder.setState({ building_type: btn.dataset.type });
+  updateGenerateButton();
 }
 
-/**
- * Rotate all views (stub)
- */
-function rotateAll() {
-  console.log('Auto-rotating all angles');
-  alert('Auto-rotating through all angles... (stub implementation)');
+function onPillStateChange(pillState) {
+  updatePromptPreview(pillState);
+  updateGenerateButton();
 }
 
-/**
- * Capture site
- */
-function captureSite() {
-  alert('Capturing current view from Google Earth... (stub implementation)');
+function updatePromptPreview(pillState) {
+  const segs = window.PromptBuilder.buildPreviewSegments(pillState);
+  const container = document.getElementById('prompt-preview-segments');
+
+  if (segs.length === 0) {
+    container.innerHTML = '<span class="preview-placeholder">Select a building type and options to see your prompt build here...</span>';
+  } else {
+    container.innerHTML = segs.map(s =>
+      `<span class="prompt-segment" style="background:${s.color}">${escHtml(s.text)}</span>`
+    ).join('');
+  }
+
+  // Raw prompt
+  const rawEl = document.getElementById('raw-prompt-text');
+  if (pillState.building_type) {
+    // Build a preview prompt inline (matches server logic)
+    rawEl.textContent = buildClientPromptPreview(pillState);
+  } else {
+    rawEl.textContent = '';
+  }
 }
 
-/**
- * Step 3: Handle generation
- */
-async function handleGenerate(e) {
+function buildClientPromptPreview(pillState) {
+  const BUILDING_DESCRIPTORS = {
+    'Office': 'commercial office building', 'Residential': 'residential apartment building',
+    'Mixed Use': 'mixed-use development with retail at ground floor', 'Retail': 'retail development',
+    'School': 'educational building', 'Hotel': 'hotel', 'Industrial': 'light industrial building',
+    'Healthcare': 'healthcare facility',
+  };
+  const { building_type, stories, arch_style, facade, roof, landscaping, time_of_day, weather, surroundings, free_text, skip = {} } = pillState;
+  const desc = BUILDING_DESCRIPTORS[building_type] || building_type;
+  const parts = [
+    `Photorealistic aerial drone CGI.`,
+    `\nNew ${desc}`,
+    stories ? `, ${stories} storeys` : '',
+    !skip.arch_style && arch_style ? `, ${arch_style} style` : '',
+    !skip.facade && facade ? `. Facade: ${facade}` : '',
+    !skip.roof && roof ? `. Roof: ${roof}` : '',
+    !skip.landscaping && landscaping ? `. Landscaping: ${landscaping}` : '',
+    '\n',
+    time_of_day ? `Lighting: ${time_of_day}` : '',
+    !skip.weather && weather ? `, ${weather}` : '',
+    !skip.surroundings && surroundings ? `.\n${surroundings}` : '',
+    free_text ? `\n\n${free_text}` : '',
+  ];
+  return parts.join('').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function updateGenerateButton() {
+  const pillState = window.PromptBuilder.getState();
+  const hasBuilding = !!pillState.building_type;
+  const btn = document.getElementById('generate-btn');
+  const hint = document.getElementById('generate-hint');
+  btn.disabled = !hasBuilding;
+  hint.textContent = hasBuilding ? 'Ready — click to generate your CGI visualisations' : 'Select a building type to continue';
+}
+
+function handleFreeText(val) {
+  window.PromptBuilder.setState({ free_text: val });
+}
+
+// ── Reference images ──────────────────────────────────────────────────────
+
+function handleRefDragover(e) {
   e.preventDefault();
+  document.getElementById('ref-upload-zone').classList.add('dragover');
+}
 
-  const buildingType = document.getElementById('building-type').value;
-  const stories = document.getElementById('stories').value;
-  const styleNotes = document.getElementById('style-notes').value;
-  const includeInteriors = document.getElementById('include-interiors').checked;
+function handleRefDrop(e) {
+  e.preventDefault();
+  document.getElementById('ref-upload-zone').classList.remove('dragover');
+  processRefFiles(Array.from(e.dataTransfer.files));
+}
 
-  if (!buildingType || !stories) {
-    alert('Please select building type and stories');
+function handleRefFiles(e) {
+  processRefFiles(Array.from(e.target.files));
+  e.target.value = '';
+}
+
+function processRefFiles(files) {
+  const remaining = 5 - state.referenceImages.length;
+  const toProcess = files.filter(f => f.type.startsWith('image/')).slice(0, remaining);
+
+  toProcess.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target.result;
+      // Resize client-side to max 1280x960 to keep payload small
+      resizeImage(dataUrl, 1280, 960, (resizedDataUrl) => {
+        const base64 = resizedDataUrl.split(',')[1];
+        const mimeType = file.type || 'image/jpeg';
+        state.referenceImages.push({ dataUrl: resizedDataUrl, data: base64, mimeType });
+        renderRefThumbs();
+      });
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function resizeImage(dataUrl, maxW, maxH, callback) {
+  const img = new Image();
+  img.onload = () => {
+    const scale = Math.min(1, maxW / img.width, maxH / img.height);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(img.width * scale);
+    canvas.height = Math.round(img.height * scale);
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    callback(canvas.toDataURL('image/jpeg', 0.85));
+  };
+  img.src = dataUrl;
+}
+
+function renderRefThumbs() {
+  const container = document.getElementById('ref-thumbs');
+  container.innerHTML = '';
+  state.referenceImages.forEach((img, i) => {
+    const thumb = document.createElement('div');
+    thumb.className = 'ref-thumb';
+    thumb.innerHTML = `
+      <img src="${img.dataUrl}" alt="Reference ${i + 1}">
+      <button class="ref-thumb-remove" onclick="removeRefImage(${i})" title="Remove">&#215;</button>
+    `;
+    container.appendChild(thumb);
+  });
+}
+
+function removeRefImage(index) {
+  state.referenceImages.splice(index, 1);
+  renderRefThumbs();
+}
+
+// ── Step 4 & 5: Generate & Results ───────────────────────────────────────
+
+async function handleGenerate() {
+  const pillState = window.PromptBuilder.getState();
+  if (!pillState.building_type) return;
+  if (!state.selectedCapture) {
+    alert('Please go back and select a site view first.');
     return;
   }
 
   goToStep(4);
-  startGeneration({
-    buildingType,
-    stories,
-    styleNotes,
-    includeInteriors
-  });
-}
+  document.getElementById('progress-bar').style.width = '0%';
+  document.getElementById('gen-status-msg').textContent = 'Queuing generation...';
 
-/**
- * Start generation process
- */
-async function startGeneration(config) {
   try {
-    const response = await fetch('/api/generate', {
+    const res = await fetch('/api/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        site_id: state.selectedSite.id,
-        capture_url: state.selectedCapture?.screenshot_url || '',
-        building_type: config.buildingType,
-        stories: config.stories,
-        style_notes: config.styleNotes,
-        include_interiors: config.includeInteriors,
-        city: state.currentCity
-      })
+        site_id: state.selectedSite ? (state.selectedSite.id || state.selectedSite.name) : 'unknown',
+        capture_id: state.selectedCapture.id,
+        city: state.currentCity,
+        pill_state: pillState,
+        reference_images: state.referenceImages.map(r => ({ data: r.data, mimeType: r.mimeType })),
+      }),
     });
 
-    if (!response.ok) throw new Error('Generation failed');
+    if (res.status === 402) {
+      const data = await res.json();
+      goToStep(3);
+      alert(data.error || 'No credits remaining. Sign in for more free generations.');
+      return;
+    }
 
-    const data = await response.json();
+    const data = await res.json();
+    if (!data.job_id) throw new Error('No job ID returned');
+
     state.jobId = data.job_id;
-
-    // Poll for progress
     pollGenerationProgress();
-  } catch (error) {
-    console.error('Generation error:', error);
-    alert('Failed to start generation. Please try again.');
+  } catch (err) {
     goToStep(3);
+    alert('Generation failed: ' + err.message);
   }
 }
 
-/**
- * Poll generation progress
- */
-async function pollGenerationProgress() {
-  const maxAttempts = 120; // 2 minutes with 1s intervals
-  let attempt = 0;
+function pollGenerationProgress() {
+  const maxWait = 180000; // 3 min
+  const start = Date.now();
 
-  const poll = setInterval(async () => {
-    attempt++;
+  const poll = async () => {
+    if (Date.now() - start > maxWait) {
+      goToStep(3);
+      alert('Generation timed out. Please try again.');
+      return;
+    }
 
     try {
-      const response = await fetch(`/api/status/${state.jobId}`);
-      if (!response.ok) throw new Error('Status check failed');
+      const res = await fetch(`/api/status/${state.jobId}`);
+      const job = await res.json();
 
-      const data = await response.json();
+      document.getElementById('progress-bar').style.width = `${job.progress || 0}%`;
+      if (job.message) document.getElementById('gen-status-msg').textContent = job.message;
 
-      // Update progress bar
-      const progressFill = document.getElementById('progress-fill');
-      progressFill.style.width = `${data.progress}%`;
-
-      // Cycle status messages
-      const messages = [
-        'Analysing site context...',
-        'Building architectural prompt...',
-        'Generating aerial CGI...',
-        'Creating street-level views...',
-        'Finishing up...'
-      ];
-      const msgIndex = Math.floor((data.progress / 100) * (messages.length - 1));
-      document.getElementById('progress-message').textContent = messages[msgIndex];
-
-      // Check if done
-      if (data.status === 'completed') {
-        clearInterval(poll);
-        displayResults(data.images);
-      } else if (data.status === 'error') {
-        clearInterval(poll);
-        alert(`Generation failed: ${data.message}`);
-        goToStep(3);
+      if (job.status === 'completed') {
+        state.generationCount++;
+        displayResults(job.images);
+        // Refresh credit count
+        fetch('/api/me').then(r => r.json()).then(d => updateCreditDisplay(d.credits, d.authenticated)).catch(() => {});
+        return;
       }
-    } catch (error) {
-      console.error('Poll error:', error);
-    }
 
-    if (attempt >= maxAttempts) {
-      clearInterval(poll);
-      alert('Generation timeout. Please try again.');
-      goToStep(3);
+      if (job.status === 'error') {
+        goToStep(3);
+        alert('Generation error: ' + (job.message || 'Unknown error'));
+        return;
+      }
+
+      setTimeout(poll, 1500);
+    } catch {
+      setTimeout(poll, 2000);
     }
-  }, 500);
+  };
+
+  setTimeout(poll, 1000);
 }
 
-/**
- * Display results
- */
 function displayResults(images) {
-  if (images.length === 0) {
-    alert('No images generated');
+  if (!images || images.length === 0) {
     goToStep(3);
+    alert('No images were generated. Please try again.');
     return;
   }
 
-  // Set hero image (first image, usually aerial)
-  const aerialImage = images.find(img => img.type === 'aerial') || images[0];
-  document.getElementById('hero-image').src = aerialImage.url;
+  const pillState = window.PromptBuilder.getState();
+  document.getElementById('results-site-label').textContent =
+    `${pillState.building_type || ''}${state.currentCity ? ' — ' + state.currentCity : ''}`;
 
-  // Display grid images (everything except aerial)
-  const gridImages = images.filter(img => img.type !== 'aerial');
-  const gridContainer = document.getElementById('grid-images');
-  gridContainer.innerHTML = '';
+  // Hero (first image)
+  const hero = document.getElementById('results-hero');
+  hero.innerHTML = `
+    <img src="${images[0].url}" alt="Aerial CGI">
+    <p class="results-hero-caption">Aerial / Primary View</p>
+  `;
 
-  gridImages.forEach(img => {
+  // Grid (remaining images)
+  const grid = document.getElementById('results-grid');
+  grid.innerHTML = '';
+  images.slice(1).forEach(img => {
+    const label = (img.type || '').replace(/_/g, ' ');
     const item = document.createElement('div');
-    item.className = 'grid-image-item';
+    item.className = 'result-item';
     item.innerHTML = `
-      <img src="${img.url}" alt="${img.type}">
-      <button class="btn btn-secondary download-btn" onclick="downloadImage(this)">Download</button>
+      <img src="${img.url}" alt="${label}">
+      <div class="result-item-footer">
+        <span class="result-label">${label}</span>
+        <a class="result-download" href="${img.url}" download="site-scout-${img.type}.jpg">Download</a>
+      </div>
     `;
-    gridContainer.appendChild(item);
+    grid.appendChild(item);
   });
-
-  // Update generation count and display
-  state.generationCount++;
-  document.getElementById('session-info').textContent = 
-    `Session used ${state.generationCount} generation${state.generationCount !== 1 ? 's' : ''}`;
 
   goToStep(5);
 }
 
-/**
- * Download image
- */
-function downloadImage(btn) {
-  const img = btn.closest('.grid-image-item, .hero-image')?.querySelector('img');
-  if (!img) return;
-
-  const link = document.createElement('a');
-  link.href = img.src;
-  link.download = `site-scout-${Date.now()}.png`;
-  link.click();
+function downloadAll() {
+  const allImgs = document.querySelectorAll('#results-hero img, #results-grid img');
+  allImgs.forEach((img, i) => {
+    const a = document.createElement('a');
+    a.href = img.src;
+    a.download = `site-scout-${i + 1}.jpg`;
+    a.click();
+  });
 }
 
-/**
- * Reset app
- */
 function resetApp() {
-  state.currentStep = 1;
   state.selectedSite = null;
   state.selectedCapture = null;
+  state.currentCity = null;
   state.jobId = null;
-
+  state.referenceImages = [];
   document.getElementById('city-input').value = '';
-  document.getElementById('building-type').value = '';
-  document.getElementById('stories').value = '';
-  document.getElementById('style-notes').value = '';
-  document.getElementById('include-interiors').checked = true;
-  document.getElementById('search-results').innerHTML = '';
-  document.getElementById('sites-map-container').style.display = 'none';
-  document.querySelectorAll('.city-chip').forEach(c => c.classList.remove('active'));
-
-  if (sitesMap) {
-    sitesMap.remove();
-    sitesMap = null;
-  }
-
+  document.getElementById('site-results').innerHTML = '';
+  document.getElementById('ref-thumbs').innerHTML = '';
+  document.getElementById('free-text-input').value = '';
+  document.getElementById('overview-map-wrap').style.display = 'none';
+  document.querySelectorAll('.building-tile').forEach(t => t.classList.remove('selected'));
+  window.PromptBuilder.setState({ building_type: null });
   goToStep(1);
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────
+
+function escHtml(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

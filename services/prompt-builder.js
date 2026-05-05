@@ -1,101 +1,114 @@
-/**
- * Prompt Builder Service
- * Builds rich, detailed prompts for Gemini image generation
- */
-
-/**
- * Build aerial/drone view prompt
- * @param {string} siteScreenshot - Reference screenshot or placeholder
- * @param {string} buildingType - Building type (Office, Residential, etc.)
- * @param {string} stories - Number of stories
- * @param {string} styleNotes - Style description from user
- * @param {string} city - City name
- * @returns {string} Detailed prompt for aerial CGI
- */
-function buildAerialPrompt(siteScreenshot, buildingType, stories, styleNotes, city) {
-  let storyCount = 'multi-storey';
-  
-  if (stories === '1–2') storyCount = 'two-storey';
-  else if (stories === '3–5') storyCount = 'five-storey';
-  else if (stories === '6–10') storyCount = 'ten-storey';
-  else if (stories === '11–20') storyCount = 'high-rise';
-  else if (stories === '20+') storyCount = 'tall high-rise';
-
-  const styleSection = styleNotes && styleNotes.trim() 
-    ? `Architectural style: ${styleNotes}. `
-    : 'Contemporary sustainable design with emphasis on green spaces. ';
-
-  const prompt = `A photorealistic drone photograph taken at 45 degrees from above, golden hour warm lighting, of a new ${storyCount} ${buildingType.toLowerCase()} building situated on an urban site in ${city}. ${styleSection}The building appears naturally integrated into its surroundings with seamless landscaping and pedestrian areas. High-end architectural photography quality, 8K resolution, sharp focus, professional CGI quality with no visible renders. No text overlays. Photorealistic, not a 3D model render. Professional architectural photography style.`;
-
-  return prompt;
-}
-
-/**
- * Build street-level view prompt
- * @param {string} aerialCGI - Reference aerial image URL (for context)
- * @param {string} buildingType - Building type
- * @param {string} stories - Number of stories
- * @param {number} viewIndex - View index (0, 1, 2 for different angles)
- * @returns {string} Street-level prompt
- */
-function buildStreetPrompt(aerialCGI, buildingType, stories, viewIndex) {
-  const angles = [
-    'front façade at street level',
-    'corner view with adjacent buildings',
-    'entrance and ground floor context'
-  ];
-
-  const angleDescription = angles[viewIndex % 3];
-
-  let storyCount = 'multi-storey';
-  if (stories === '1–2') storyCount = 'two-storey';
-  else if (stories === '3–5') storyCount = 'five-storey';
-  else if (stories === '6–10') storyCount = 'ten-storey';
-  else if (stories === '11–20') storyCount = 'high-rise';
-  else if (stories === '20+') storyCount = 'skyscraper';
-
-  const prompt = `A photorealistic street-level photograph showing the ${angleDescription} of a new ${storyCount} ${buildingType.toLowerCase()} building. Shot at eye level, warm day lighting with subtle shadows. The street shows pedestrians, street trees, and urban context. Professional architectural photography, 8K quality, sharp focus, no visible CGI artifacts. Photorealistic quality matching professional real estate and architectural photography. No text overlays.`;
-
-  return prompt;
-}
-
-/**
- * Build interior view prompt
- * @param {string} buildingType - Building type
- * @param {string} stories - Number of stories
- * @param {string} styleNotes - Style description
- * @param {number} viewIndex - View index
- * @returns {string} Interior prompt
- */
-function buildInteriorPrompt(buildingType, stories, styleNotes, viewIndex) {
-  const interiorTypes = {
-    'Office': ['open-plan office space with natural light', 'collaborative work area with exposed beams', 'modern reception area with green walls'],
-    'Residential': ['contemporary living space with floor-to-ceiling windows', 'bright master bedroom with city views', 'modern kitchen and dining area'],
-    'Mixed Use': ['ground floor retail space with tall ceilings', 'residential living area with city views', 'shared community space with skylights'],
-    'Retail': ['bright storefront with prominent displays', 'interior shopping mall perspective', 'checkout area with natural lighting'],
-    'School': ['light-filled classroom with connected learning spaces', 'modern sports hall with natural ventilation', 'collaborative learning commons'],
-    'Hotel': ['guest room with premium furnishings and city views', 'contemporary lobby and reception area', 'fine dining restaurant with elegant design'],
-    'Industrial': ['open workshop space with high ceilings', 'production floor with efficient layout', 'loading bay with modern facilities'],
-    'Healthcare': ['modern patient room with natural light', 'contemporary waiting area with calming design', 'treatment space with modern equipment']
-  };
-
-  const buildingKey = Object.keys(interiorTypes).find(key => 
-    buildingType.toLowerCase().includes(key.toLowerCase())
-  ) || 'Office';
-
-  const interiorDescription = interiorTypes[buildingKey][viewIndex % 3];
-
-  const styleSection = styleNotes && styleNotes.trim()
-    ? `Design theme: ${styleNotes}. `
-    : 'Contemporary sustainable design with natural materials. ';
-
-  const prompt = `A photorealistic interior photograph of a ${interiorDescription} in a modern ${buildingType.toLowerCase()} building. ${styleSection}Professional architectural interior photography, daylight illumination, 8K quality, sharp focus, no visible CGI artifacts. Photorealistic quality. High-end interior design aesthetic. No people visible, clean and staged. No text overlays.`;
-
-  return prompt;
-}
-
-module.exports = {
-  buildAerialPrompt,
-  buildStreetPrompt,
-  buildInteriorPrompt
+const SEGMENT_COLORS = {
+  building:     '#16a34a',
+  stories:      '#16a34a',
+  arch_style:   '#7c3aed',
+  facade:       '#ea580c',
+  roof:         '#0284c7',
+  landscaping:  '#0d9488',
+  time_of_day:  '#d97706',
+  weather:      '#475569',
+  surroundings: '#be185d',
+  free_text:    '#6b7280',
 };
+
+const LANDSCAPING_MAP = {
+  'Very Green':  'with extensive landscaping, mature trees, green walls, and planted areas throughout',
+  'Balanced':    'with a balanced mix of soft landscaping and hardscape, tree-lined paths and plazas',
+  'Minimal':     'with minimal planting, clean hardscape, simple ground treatment',
+  'Very Paved':  'with predominantly paved urban hardscape, geometric plazas, and minimal vegetation',
+};
+
+const TIME_MAP = {
+  'Dawn':        'at dawn with soft pink and orange light on the horizon',
+  'Morning':     'in bright morning light with long shadows',
+  'Midday':      'in harsh midday sun with crisp shadows',
+  'Golden Hour': 'during golden hour with warm, directional light and long shadows',
+  'Dusk':        'at dusk with deep blue sky and warm interior lighting glowing',
+  'Night':       'at night with dramatic uplighting and illuminated interiors',
+};
+
+const WEATHER_MAP = {
+  'Clear':           'under clear blue sky',
+  'Overcast':        'under soft overcast light with even shadows',
+  'Dramatic clouds': 'with dramatic storm clouds and dynamic sky',
+  'Rain-washed':     'on a rain-washed day with reflective wet surfaces',
+};
+
+const SURROUNDINGS_MAP = {
+  'Dense urban':  'surrounded by dense urban cityscape, tall buildings, and busy streets',
+  'Mixed urban':  'in a mixed urban neighbourhood with mid-rise buildings and street activity',
+  'Suburban':     'in a suburban context with lower-density housing and green space nearby',
+  'Green belt':   'at the edge of a green belt with open countryside visible beyond',
+};
+
+const BUILDING_DESCRIPTORS = {
+  'Office':       'commercial office building',
+  'Residential':  'residential apartment building',
+  'Mixed Use':    'mixed-use development with retail at ground floor and residential above',
+  'Retail':       'retail development',
+  'School':       'educational building',
+  'Hotel':        'hotel',
+  'Industrial':   'light industrial and workspace building',
+  'Healthcare':   'healthcare facility',
+};
+
+const VIEW_INSTRUCTIONS = {
+  aerial:          'Photorealistic aerial drone CGI looking down at approximately 45 degrees. Show the full building footprint, roof, and immediate surroundings.',
+  street_front:    'Photorealistic street-level CGI of the front facade. Eye-level perspective from across the street showing the full elevation.',
+  street_corner:   'Photorealistic street-level CGI from a corner angle showing two facades. Human-scale perspective with pedestrians and street activity.',
+  street_entrance: 'Photorealistic street-level CGI focused on the main entrance and ground floor. Close-up perspective showing materiality and detail.',
+};
+
+function buildPrompt(pillState, viewType = 'aerial') {
+  const {
+    building_type, stories, arch_style, facade, roof,
+    landscaping, time_of_day, weather, surroundings, free_text,
+    skip = {}
+  } = pillState;
+
+  const descriptor = BUILDING_DESCRIPTORS[building_type] || building_type.toLowerCase();
+  const storiesText = stories ? `, ${stories} storeys` : '';
+  const styleText = (!skip.arch_style && arch_style) ? `, ${arch_style} architectural style` : '';
+  const facadeText = (!skip.facade && facade) ? `. Facade: ${facade}` : '';
+  const roofText = (!skip.roof && roof) ? `. Roof: ${roof}` : '';
+  const landscapeText = (!skip.landscaping && landscaping) ? `. ${LANDSCAPING_MAP[landscaping] || landscaping}` : '';
+  const timeText = TIME_MAP[time_of_day] || time_of_day || 'during golden hour';
+  const weatherText = (!skip.weather && weather) ? ` ${WEATHER_MAP[weather] || weather}` : '';
+  const surroundText = (!skip.surroundings && surroundings) ? `. ${SURROUNDINGS_MAP[surroundings] || surroundings}` : '';
+  const freeText = free_text ? ` ${free_text.trim()}` : '';
+
+  const viewInstruction = VIEW_INSTRUCTIONS[viewType] || VIEW_INSTRUCTIONS.aerial;
+
+  return `${viewInstruction}
+
+Take this photograph of the existing empty site and generate a photorealistic architectural visualisation showing a new ${descriptor}${storiesText}${styleText}${facadeText}${roofText}${landscapeText} built on this site${surroundText}.
+
+Lighting: ${timeText}${weatherText}.
+
+The building should fit naturally into the site boundaries visible in the photograph. Maintain the existing street geometry, neighbouring buildings, and surrounding context. The generated image should look like a professional architectural CGI or design-stage render — photorealistic, not cartoon or sketch.${freeText}`;
+}
+
+function buildPromptSegments(pillState) {
+  const {
+    building_type, stories, arch_style, facade, roof,
+    landscaping, time_of_day, weather, surroundings, free_text,
+    skip = {}
+  } = pillState;
+
+  const segments = [];
+
+  if (building_type) segments.push({ text: building_type, color: SEGMENT_COLORS.building, key: 'building_type' });
+  if (stories)       segments.push({ text: stories, color: SEGMENT_COLORS.stories, key: 'stories' });
+  if (!skip.arch_style && arch_style) segments.push({ text: arch_style, color: SEGMENT_COLORS.arch_style, key: 'arch_style' });
+  if (!skip.facade && facade)         segments.push({ text: facade, color: SEGMENT_COLORS.facade, key: 'facade' });
+  if (!skip.roof && roof)             segments.push({ text: roof, color: SEGMENT_COLORS.roof, key: 'roof' });
+  if (!skip.landscaping && landscaping) segments.push({ text: landscaping, color: SEGMENT_COLORS.landscaping, key: 'landscaping' });
+  if (time_of_day)                    segments.push({ text: time_of_day, color: SEGMENT_COLORS.time_of_day, key: 'time_of_day' });
+  if (!skip.weather && weather)       segments.push({ text: weather, color: SEGMENT_COLORS.weather, key: 'weather' });
+  if (!skip.surroundings && surroundings) segments.push({ text: surroundings, color: SEGMENT_COLORS.surroundings, key: 'surroundings' });
+  if (free_text && free_text.trim()) segments.push({ text: free_text.trim(), color: SEGMENT_COLORS.free_text, key: 'free_text' });
+
+  return segments;
+}
+
+module.exports = { buildPrompt, buildPromptSegments, SEGMENT_COLORS };

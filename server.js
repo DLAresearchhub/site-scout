@@ -3,6 +3,7 @@ const express = require('express');
 const session = require('express-session');
 const SQLiteStore = require('connect-sqlite3')(session);
 const bodyParser = require('body-parser');
+const passport = require('passport');
 const path = require('path');
 const usageLogger = require('./services/usage-logger');
 
@@ -25,10 +26,13 @@ app.use(
     cookie: {
       secure: process.env.NODE_ENV === 'production',
       httpOnly: true,
-      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      maxAge: 7 * 24 * 60 * 60 * 1000
     }
   })
 );
+
+app.use(passport.initialize());
+app.use(passport.session());
 
 // Static files
 app.use(express.static(path.join(__dirname, 'public')));
@@ -37,6 +41,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/', require('./routes/index'));
 app.use('/api', require('./routes/api'));
 app.use('/admin', require('./routes/admin'));
+app.use('/auth', require('./routes/auth'));
 
 // Error handling middleware
 app.use((err, req, res, next) => {
