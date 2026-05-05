@@ -102,7 +102,7 @@ function displaySearchResults(sites) {
     card.className = 'site-card';
     card.innerHTML = `
       <div class="site-card-image">
-        <img src="${mapUrl}" alt="Map of ${site.address}" style="width:100%;height:100%;object-fit:cover;border-radius:8px 8px 0 0;" onerror="this.parentElement.innerHTML='<div style=\'display:flex;align-items:center;justify-content:center;height:100%;color:#8888aa;font-size:13px;\'>📍 ${site.lat.toFixed(4)}, ${site.lng.toFixed(4)}</div>'">
+        <img src="${mapUrl}" alt="Map of ${site.address}" style="width:100%;height:100%;object-fit:cover;border-radius:8px 8px 0 0;" onerror="this.style.display='none';this.parentElement.insertAdjacentHTML('beforeend','<div style=&quot;display:flex;align-items:center;justify-content:center;height:100%;color:#8888aa;font-size:13px;&quot;>📍 ${site.lat.toFixed(4)}, ${site.lng.toFixed(4)}</div>')">
       </div>
       <div class="site-card-content">
         <div class="site-card-title">${site.name}</div>
