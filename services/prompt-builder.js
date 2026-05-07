@@ -98,9 +98,10 @@ function buildLightingClause(p) {
   return `Captured ${time}${wx}. Sun position, shadow length, direction and softness physically consistent with that time. Balanced ambient illumination with realistic bounce light. Realistic reflections in glazing and polished materials. Lighting is physically accurate, neutral, and non-dramatic.`;
 }
 
-function buildPrompt(pillState, viewType = 'perspective_3d') {
+function buildPrompt(pillState, viewType = 'perspective_3d', opts = {}) {
   const p = pillState || {};
   const { landscaping, free_text, skip = {} } = p;
+  const { refDescriptions = [], hasBoundary = false } = opts;
 
   const view       = VIEW_INSTRUCTIONS[viewType] || VIEW_INSTRUCTIONS.perspective_3d;
   const descriptor = BUILDING_DESCRIPTORS[p.building_type] || (p.building_type || 'building').toLowerCase();
@@ -109,13 +110,23 @@ function buildPrompt(pillState, viewType = 'perspective_3d') {
   const landscape  = (!skip.landscaping && landscaping) ? (LANDSCAPING_MAP[landscaping] || landscaping) : '';
   const free       = free_text && free_text.trim() ? `\n\nAdditional notes: ${free_text.trim()}` : '';
 
+  const boundaryClause = hasBoundary
+    ? 'A red outline has been drawn on the source image marking the build site. Place the new building strictly inside that red outline. Pixels outside the red outline must remain pixel-perfect identical to the source — do not add, remove, modify, or restyle anything beyond the outline.'
+    : 'Place the new building only on the empty plot visible in the source image. Do not extend it onto neighbouring land.';
+
+  const refClause = (refDescriptions && refDescriptions.length)
+    ? `\n\nReference influences (apply ONLY to the new building, never to anything around it):\n${refDescriptions.map((d, i) => `  ${i + 1}. ${d}`).join('\n')}\n\nLift the materials, fenestration patterns, and detail treatments described above and apply them to the new building's facade and roof. Do not change neighbouring buildings to match the references — references inform the new building only.`
+    : '';
+
   return `Please reimagine this low quality photoshop collage of a ${descriptor} on the empty site shown as a real, high-resolution photograph of a newly completed, inhabited environment captured by a professional architectural photographer.
 
 ${view}
 
-Site & geometry: Preserve all existing geometry — the site boundary, surrounding buildings, paths, entrances, kerbs, vegetation, and circulation — exactly as shown in the source image. Place the new building only on the empty plot. Match the scale and proportion of neighbouring buildings.
+Site & geometry: ${boundaryClause} Preserve all existing geometry — the site boundary, surrounding buildings, paths, entrances, kerbs, vegetation, and circulation — exactly as shown in the source image. Match the scale and proportion of neighbouring buildings.
 
-Architecture & materials: ${building} Newly constructed and well maintained. Clean, uniform surfaces. High-resolution material definition. Sharp edges and precise junctions. Accurate light response for glass, metal, stone and concrete. Do not introduce wear, weathering, dirt, stains, damage, or surface imperfections.${landscape ? `\n\nLandscape: ${landscape}` : ''}
+PRESERVE EXACTLY (do NOT modify): Every neighbouring building must remain pixel-perfect identical to the source — same height, same parapet line, same facade material, same window grid, same roofline, same colour. Roads, kerbs, pavements, road markings, street furniture, parked vehicles, trees, hedges, planters, the horizon line and the sky must remain exactly as shown. The only change anywhere in the image is the new building inserted on the empty site.
+
+Architecture & materials: ${building} Newly constructed and well maintained. Clean, uniform surfaces. High-resolution material definition. Sharp edges and precise junctions. Accurate light response for glass, metal, stone and concrete. Do not introduce wear, weathering, dirt, stains, damage, or surface imperfections.${landscape ? `\n\nLandscape (inside the build site only): ${landscape}` : ''}${refClause}
 
 Lighting & exposure: ${lighting}
 

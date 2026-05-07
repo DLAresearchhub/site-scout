@@ -142,6 +142,23 @@
         <p class="selected-capture-hint">Lock in this angle to use as the base for your CGI generation.</p>
         <button class="btn-primary" id="configure-btn" type="button" disabled>Use this view &#8594;</button>
       </div>
+
+      <!-- Boundary editor: hidden until "Use this view" captures the canvas -->
+      <div class="boundary-editor" id="boundary-editor" style="display:none">
+        <div class="boundary-header">
+          <h3>Mark the build site</h3>
+          <p>Draw a red boundary around the empty plot. Anything outside this line stays untouched in the generated image.</p>
+        </div>
+        <div class="boundary-canvas-wrap" id="boundary-canvas-wrap">
+          <canvas id="boundary-base"></canvas>
+          <canvas id="boundary-draw"></canvas>
+        </div>
+        <div class="boundary-controls">
+          <button class="btn-secondary" id="boundary-clear-btn" type="button">Clear</button>
+          <button class="btn-secondary" id="boundary-skip-btn"  type="button">Skip &mdash; no boundary</button>
+          <button class="btn-primary"   id="boundary-save-btn"  type="button">Save boundary &amp; configure &#8594;</button>
+        </div>
+      </div>
     </section>
 
     <!-- STEP 3: Design -->
@@ -270,7 +287,19 @@
         </div>
       </div>
 
-      <div id="results-hero" class="results-hero"></div>
+      <!-- Side-by-side: original capture vs primary generated view -->
+      <div id="results-pair" class="results-pair" style="display:none">
+        <div class="results-pair-card">
+          <img id="results-original-img" alt="Original site capture">
+          <p class="results-pair-label">Original site (your captured angle)</p>
+        </div>
+        <div class="results-pair-card">
+          <img id="results-primary-img" alt="Primary generated view">
+          <p class="results-pair-label" id="results-primary-label">Primary view</p>
+        </div>
+      </div>
+
+      <div id="results-hero" class="results-hero" style="display:none"></div>
       <div id="results-grid" class="results-grid"></div>
     </section>
 

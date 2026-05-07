@@ -5,7 +5,9 @@
 const state = {
   currentStep: 1,
   selectedSite: null,
-  selectedCapture: null,   // { id, proxyUrl, type, direction, label }
+  selectedCapture: null,   // { id, proxyUrl, type, direction, label } — annotated when user drew a boundary
+  originalCapture: null,   // un-annotated capture (always shown on results for compare)
+  hasBoundary: false,
   currentCity: null,
   jobId: null,
   user: null,
@@ -39,6 +41,14 @@ document.addEventListener('DOMContentLoaded', () => {
   if (resetBtn) resetBtn.addEventListener('click', () => resetSiteViewer());
   if (topBtn)   topBtn.addEventListener('click', () => topDownSiteViewer());
   if (useBtn)   useBtn.addEventListener('click', () => useThisView());
+
+  // Boundary editor buttons
+  const bClear = document.getElementById('boundary-clear-btn');
+  const bSkip  = document.getElementById('boundary-skip-btn');
+  const bSave  = document.getElementById('boundary-save-btn');
+  if (bClear) bClear.addEventListener('click', () => clearBoundary());
+  if (bSkip)  bSkip.addEventListener('click',  () => skipBoundary());
+  if (bSave)  bSave.addEventListener('click',  () => saveBoundary());
 
   // Load user/credits
   fetch('/api/me').then(r => r.json()).then(data => {
@@ -334,12 +344,11 @@ async function useThisView() {
   if (!viewer || !site) return;
 
   const btn = document.getElementById('configure-btn');
-  const original = btn.textContent;
+  const originalLabel = btn.textContent;
   btn.disabled = true;
   btn.textContent = 'Capturing view…';
 
   try {
-    // Force one render so the canvas is current, then read pixels
     viewer.render();
     const dataUrl = viewer.scene.canvas.toDataURL('image/jpeg', 0.92);
 
@@ -356,14 +365,175 @@ async function useThisView() {
     });
     if (!res.ok) throw new Error('capture-canvas ' + res.status);
     const capture = await res.json();
+
+    // Stash the original (un-annotated) capture for the results page comparison.
+    // Boundary editor may overwrite state.selectedCapture with an annotated version.
+    state.originalCapture = capture;
     state.selectedCapture = capture;
-    goToStep(3);
+    state.hasBoundary = false;
+
+    enterBoundaryEditor(dataUrl);
   } catch (err) {
     console.error('[useThisView]', err);
     alert('Could not capture this view: ' + err.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = original;
+    btn.textContent = originalLabel;
+  }
+}
+
+// ── Boundary editor (red-line site outline) ─────────────────────────────────
+
+const _boundary = {
+  baseDataUrl: null,
+  drawCtx: null,
+  baseCtx: null,
+  width: 0,
+  height: 0,
+  drawing: false,
+  lastX: 0,
+  lastY: 0,
+  hasInk: false,
+};
+
+function enterBoundaryEditor(dataUrl) {
+  // Hide viewer + use-this-view button; show boundary editor
+  document.querySelector('.viewer-shell').style.display = 'none';
+  document.getElementById('step2-actions').style.display = 'none';
+  document.querySelector('.capture-instructions').style.display = 'none';
+  const editor = document.getElementById('boundary-editor');
+  editor.style.display = 'block';
+
+  const baseCanvas = document.getElementById('boundary-base');
+  const drawCanvas = document.getElementById('boundary-draw');
+
+  const img = new Image();
+  img.onload = () => {
+    // Cap the rendered size so the editor fits the viewport while still being usable
+    const maxW = Math.min(960, document.querySelector('#boundary-canvas-wrap').clientWidth || 960);
+    const scale = Math.min(1, maxW / img.naturalWidth);
+    const w = Math.round(img.naturalWidth * scale);
+    const h = Math.round(img.naturalHeight * scale);
+
+    baseCanvas.width = drawCanvas.width = w;
+    baseCanvas.height = drawCanvas.height = h;
+
+    _boundary.width  = w;
+    _boundary.height = h;
+    _boundary.baseDataUrl = dataUrl;
+    _boundary.baseCtx = baseCanvas.getContext('2d');
+    _boundary.drawCtx = drawCanvas.getContext('2d');
+    _boundary.hasInk = false;
+
+    _boundary.baseCtx.drawImage(img, 0, 0, w, h);
+    _boundary.drawCtx.clearRect(0, 0, w, h);
+
+    // Stroke style — thick semi-transparent red, round joins
+    _boundary.drawCtx.lineCap = 'round';
+    _boundary.drawCtx.lineJoin = 'round';
+    _boundary.drawCtx.lineWidth = 6;
+    _boundary.drawCtx.strokeStyle = 'rgba(220, 38, 38, 0.95)';
+
+    bindBoundaryDrawing(drawCanvas);
+  };
+  img.src = dataUrl;
+}
+
+function bindBoundaryDrawing(canvas) {
+  const start = (clientX, clientY) => {
+    const rect = canvas.getBoundingClientRect();
+    _boundary.drawing = true;
+    _boundary.lastX = (clientX - rect.left) * (canvas.width  / rect.width);
+    _boundary.lastY = (clientY - rect.top)  * (canvas.height / rect.height);
+  };
+  const move = (clientX, clientY) => {
+    if (!_boundary.drawing) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = (clientX - rect.left) * (canvas.width  / rect.width);
+    const y = (clientY - rect.top)  * (canvas.height / rect.height);
+    const ctx = _boundary.drawCtx;
+    ctx.beginPath();
+    ctx.moveTo(_boundary.lastX, _boundary.lastY);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    _boundary.lastX = x; _boundary.lastY = y;
+    _boundary.hasInk = true;
+  };
+  const end = () => { _boundary.drawing = false; };
+
+  canvas.onmousedown = (e) => { e.preventDefault(); start(e.clientX, e.clientY); };
+  canvas.onmousemove = (e) => move(e.clientX, e.clientY);
+  window.addEventListener('mouseup', end);
+  canvas.ontouchstart = (e) => { e.preventDefault(); const t = e.touches[0]; start(t.clientX, t.clientY); };
+  canvas.ontouchmove  = (e) => { e.preventDefault(); const t = e.touches[0]; move(t.clientX, t.clientY); };
+  canvas.ontouchend   = end;
+}
+
+function clearBoundary() {
+  if (!_boundary.drawCtx) return;
+  _boundary.drawCtx.clearRect(0, 0, _boundary.width, _boundary.height);
+  _boundary.hasInk = false;
+}
+
+function exitBoundaryEditor() {
+  document.getElementById('boundary-editor').style.display = 'none';
+  document.querySelector('.viewer-shell').style.display = '';
+  document.getElementById('step2-actions').style.display = '';
+  document.querySelector('.capture-instructions').style.display = '';
+}
+
+function skipBoundary() {
+  // Original capture already in state.selectedCapture, hasBoundary=false
+  exitBoundaryEditor();
+  goToStep(3);
+}
+
+async function saveBoundary() {
+  if (!_boundary.hasInk) {
+    if (!confirm('You haven’t drawn anything. Continue without a boundary?')) return;
+    return skipBoundary();
+  }
+
+  const btn = document.getElementById('boundary-save-btn');
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Saving boundary…';
+
+  try {
+    // Composite: draw the boundary ink on top of the base image
+    const composite = document.createElement('canvas');
+    composite.width = _boundary.width;
+    composite.height = _boundary.height;
+    const cctx = composite.getContext('2d');
+    cctx.drawImage(document.getElementById('boundary-base'), 0, 0);
+    cctx.drawImage(document.getElementById('boundary-draw'), 0, 0);
+    const dataUrl = composite.toDataURL('image/jpeg', 0.92);
+
+    const site = state.selectedSite;
+    const res = await fetch('/api/capture-canvas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        site_id: (site.id || site.name) + '-marked',
+        dataUrl,
+      }),
+    });
+    if (!res.ok) throw new Error('capture-canvas (marked) ' + res.status);
+    const annotated = await res.json();
+
+    // selectedCapture now points at the annotated image (Gemini sees the red line);
+    // originalCapture stays as the un-annotated one (results page comparison).
+    state.selectedCapture = annotated;
+    state.hasBoundary = true;
+
+    exitBoundaryEditor();
+    goToStep(3);
+  } catch (err) {
+    console.error('[saveBoundary]', err);
+    alert('Could not save boundary: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
   }
 }
 
@@ -589,13 +759,24 @@ function buildClientPromptPreview(pillState) {
   const landscape = (!skip.landscaping && landscaping) ? (LANDSCAPING_MAP[landscaping] || landscaping) : '';
   const free      = free_text && free_text.trim() ? `\n\nAdditional notes: ${free_text.trim()}` : '';
 
+  const boundaryClause = state.hasBoundary
+    ? 'A red outline has been drawn on the source image marking the build site. Place the new building strictly inside that red outline. Pixels outside the red outline must remain pixel-perfect identical to the source — do not add, remove, modify, or restyle anything beyond the outline.'
+    : 'Place the new building only on the empty plot visible in the source image. Do not extend it onto neighbouring land.';
+
+  const refCount = state.referenceImages ? state.referenceImages.length : 0;
+  const refClause = refCount > 0
+    ? `\n\nReference influences (apply ONLY to the new building, never to anything around it):\n  [${refCount} reference image${refCount === 1 ? '' : 's'} will be auto-described by Gemini text-vision at generation time and the descriptions inserted here]\n\nLift the materials, fenestration patterns, and detail treatments from the references and apply them to the new building's facade and roof. References must NOT change neighbouring buildings.`
+    : '';
+
   return `Please reimagine this low quality photoshop collage of a ${descriptor} on the empty site shown as a real, high-resolution photograph of a newly completed, inhabited environment captured by a professional architectural photographer.
 
 ${VIEW}
 
-Site & geometry: Preserve all existing geometry — the site boundary, surrounding buildings, paths, entrances, kerbs, vegetation, and circulation — exactly as shown in the source image. Place the new building only on the empty plot. Match the scale and proportion of neighbouring buildings.
+Site & geometry: ${boundaryClause} Preserve all existing geometry — the site boundary, surrounding buildings, paths, entrances, kerbs, vegetation, and circulation — exactly as shown in the source image. Match the scale and proportion of neighbouring buildings.
 
-Architecture & materials: ${building} Newly constructed and well maintained. Clean, uniform surfaces. High-resolution material definition. Sharp edges and precise junctions. Accurate light response for glass, metal, stone and concrete. Do not introduce wear, weathering, dirt, stains, damage, or surface imperfections.${landscape ? `\n\nLandscape: ${landscape}` : ''}
+PRESERVE EXACTLY (do NOT modify): Every neighbouring building must remain pixel-perfect identical to the source — same height, same parapet line, same facade material, same window grid, same roofline, same colour. Roads, kerbs, pavements, road markings, street furniture, parked vehicles, trees, hedges, planters, the horizon line and the sky must remain exactly as shown. The only change anywhere in the image is the new building inserted on the empty site.
+
+Architecture & materials: ${building} Newly constructed and well maintained. Clean, uniform surfaces. High-resolution material definition. Sharp edges and precise junctions. Accurate light response for glass, metal, stone and concrete. Do not introduce wear, weathering, dirt, stains, damage, or surface imperfections.${landscape ? `\n\nLandscape (inside the build site only): ${landscape}` : ''}${refClause}
 
 Lighting & exposure: ${lighting}
 
@@ -713,6 +894,7 @@ async function handleGenerate() {
         city: state.currentCity,
         pill_state: pillState,
         reference_images: state.referenceImages.map(r => ({ data: r.data, mimeType: r.mimeType })),
+        has_boundary: !!state.hasBoundary,
       }),
     });
 
@@ -796,13 +978,25 @@ function displayResults(images) {
     street_entrance:    'Street — Entrance',
   };
 
-  // Hero (first image)
-  const hero = document.getElementById('results-hero');
+  // Side-by-side original ↔ primary generated
+  const pair = document.getElementById('results-pair');
   const heroLabel = VIEW_LABELS[images[0].type] || 'Primary View';
-  hero.innerHTML = `
-    <img src="${images[0].url}" alt="${heroLabel}">
-    <p class="results-hero-caption">${heroLabel}</p>
-  `;
+  if (state.originalCapture && state.originalCapture.proxyUrl) {
+    document.getElementById('results-original-img').src = state.originalCapture.proxyUrl;
+    document.getElementById('results-primary-img').src  = images[0].url;
+    document.getElementById('results-primary-label').textContent = heroLabel;
+    pair.style.display = 'grid';
+    document.getElementById('results-hero').style.display = 'none';
+  } else {
+    // Fallback: legacy single hero if we somehow don't have an original
+    pair.style.display = 'none';
+    const hero = document.getElementById('results-hero');
+    hero.style.display = '';
+    hero.innerHTML = `
+      <img src="${images[0].url}" alt="${heroLabel}">
+      <p class="results-hero-caption">${heroLabel}</p>
+    `;
+  }
 
   // Grid (remaining images)
   const grid = document.getElementById('results-grid');

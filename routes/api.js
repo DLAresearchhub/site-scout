@@ -9,6 +9,7 @@ const promptBuilder = require('../services/prompt-builder');
 const imageGenerator = require('../services/image-generator');
 const usageLogger = require('../services/usage-logger');
 const overlays = require('../services/overlays');
+const refAnalyzer = require('../services/ref-analyzer');
 
 const jobs = new Map();
 const FREE_LIMIT = parseInt(process.env.FREE_GENERATIONS_IP || '3', 10);
@@ -180,7 +181,7 @@ router.get('/me', (req, res) => {
 
 router.post('/generate', checkCredits, async (req, res) => {
   try {
-    const { site_id, capture_id, city, pill_state, reference_images } = req.body;
+    const { site_id, capture_id, city, pill_state, reference_images, has_boundary } = req.body;
 
     if (!site_id || !capture_id || !pill_state || !pill_state.building_type) {
       return res.status(400).json({ error: 'site_id, capture_id, and pill_state.building_type are required' });
@@ -195,7 +196,11 @@ router.post('/generate', checkCredits, async (req, res) => {
     });
 
     setImmediate(async () => {
-      await processGenerationJob(jobId, { site_id, capture_id, city, pill_state, reference_images, userId: req.user ? req.user.id : null });
+      await processGenerationJob(jobId, {
+        site_id, capture_id, city, pill_state, reference_images,
+        hasBoundary: !!has_boundary,
+        userId: req.user ? req.user.id : null,
+      });
     });
 
     res.json({ job_id: jobId, status: 'queued' });
@@ -219,7 +224,7 @@ async function processGenerationJob(jobId, params) {
   job.status = 'processing';
 
   try {
-    const { capture_id, pill_state, reference_images, userId, city } = params;
+    const { capture_id, pill_state, reference_images, hasBoundary, userId, city } = params;
 
     // Deduct credit before heavy work
     if (userId) {
@@ -244,6 +249,18 @@ async function processGenerationJob(jobId, params) {
       if (!buf) throw new Error('Could not load capture image');
       captureBase64 = buf.toString('base64');
     }
+
+    // Pre-analyse reference images (text-vision) so the prompt can name what's in them
+    let refDescriptions = [];
+    if (Array.isArray(reference_images) && reference_images.length > 0) {
+      job.message = `Reading ${reference_images.length} reference image${reference_images.length === 1 ? '' : 's'}...`;
+      try {
+        refDescriptions = await refAnalyzer.describeReferences(reference_images);
+      } catch (e) {
+        console.warn('[generate] ref-analyzer failed; continuing without descriptions:', e.message);
+      }
+    }
+    const promptOpts = { refDescriptions, hasBoundary: !!hasBoundary };
 
     // Pick generation strategy based on the capture type
     const is3D = capture.type === 'mapbox3d' || capture.type === 'birdseye';
@@ -277,14 +294,14 @@ async function processGenerationJob(jobId, params) {
       job.message = statusSteps[i];
 
       if (i === 2) {
-        const prompt = promptBuilder.buildPrompt(pill_state, primaryView);
+        const prompt = promptBuilder.buildPrompt(pill_state, primaryView, promptOpts);
         const imageUrl = await imageGenerator.generateFromCapture(captureBase64, 'image/jpeg', prompt, reference_images);
         job.images.push({ type: primaryView, url: imageUrl });
       }
 
       if (i === 3) {
         for (const viewType of additionalViews) {
-          const prompt = promptBuilder.buildPrompt(pill_state, viewType);
+          const prompt = promptBuilder.buildPrompt(pill_state, viewType, promptOpts);
           const imageUrl = await imageGenerator.generateFromCapture(captureBase64, 'image/jpeg', prompt, reference_images);
           job.images.push({ type: viewType, url: imageUrl });
         }
