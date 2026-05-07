@@ -30,6 +30,45 @@ async function checkCredits(req, res, next) {
   next();
 }
 
+// ── Free-text geocoding (Nominatim proxy) ───────────────────────────────────
+
+router.get('/geocode', async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q) return res.status(400).json({ error: 'q required' });
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=gb`;
+    const data = await new Promise((resolve, reject) => {
+      const httpsLib = require('https');
+      const r = httpsLib.request({
+        hostname: 'nominatim.openstreetmap.org',
+        path: `/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=gb`,
+        method: 'GET',
+        headers: { 'User-Agent': 'SiteScout/1.0 (sitescout@example.com)', 'Accept': 'application/json' },
+      }, resp => {
+        const chunks = [];
+        resp.on('data', c => chunks.push(c));
+        resp.on('end', () => {
+          if (resp.statusCode !== 200) return reject(new Error('Nominatim ' + resp.statusCode));
+          try { resolve(JSON.parse(Buffer.concat(chunks).toString())); } catch (e) { reject(e); }
+        });
+      });
+      r.on('error', reject);
+      r.end();
+    });
+    const top = (data && data[0]) || null;
+    if (!top) return res.json({ found: false });
+    res.json({
+      found: true,
+      lat: parseFloat(top.lat),
+      lng: parseFloat(top.lon),
+      displayName: top.display_name,
+    });
+  } catch (e) {
+    console.error('[geocode]', e.message);
+    res.status(502).json({ error: 'Geocoding failed', message: e.message });
+  }
+});
+
 // ── Public client config ────────────────────────────────────────────────────
 
 router.get('/config', (req, res) => {

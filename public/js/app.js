@@ -34,9 +34,8 @@ document.addEventListener('DOMContentLoaded', () => {
     state.googleMapTilesKey = cfg.googleMapTilesKey;
   }).catch(() => {});
 
-  // Load overlay prefs from localStorage; default on for free overlays
-  loadOverlayPrefs();
-  initOverlayToggles();
+  // (Overlay toggles removed in pivot to image-generator — keep loaders in
+  // the file for any future re-enable, just don't init them here.)
 
   // Wire viewer overlay buttons
   const resetBtn = document.getElementById('viewer-reset-btn');
@@ -133,23 +132,94 @@ function goToStep(n) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-// ── Step 1: Search ────────────────────────────────────────────────────────
+// ── Step 1: Fly anywhere (default) + curated preset sites (optional) ──────
 
-function quickSearch(city) {
+// Hardcoded centres for the chip cities. For free-text addresses we hit
+// Nominatim via /api/geocode (added with address-search work).
+const CITY_COORDS = {
+  London:     [51.5074, -0.1278], Manchester: [53.4808, -2.2426],
+  Leeds:      [53.8008, -1.5491], Birmingham: [52.4862, -1.8904],
+  Bristol:    [51.4545, -2.5879], Sheffield:  [53.3811, -1.4701],
+  Liverpool:  [53.4084, -2.9916], Edinburgh:  [55.9533, -3.1883],
+  Glasgow:    [55.8642, -4.2518], Newcastle:  [54.9783, -1.6178],
+  Nottingham: [52.9548, -1.1581], Cardiff:    [51.4816, -3.1791],
+  York:       [53.9590, -1.0815], Leicester:  [52.6369, -1.1398],
+  Bradford:   [53.7950, -1.7594],
+};
+
+function quickFlyTo(city) {
   document.getElementById('city-input').value = city;
-  searchCity(city);
+  flyToPlace(city);
 }
 
 function handleSearch(e) {
   e.preventDefault();
-  const city = document.getElementById('city-input').value.trim();
-  if (city) searchCity(city);
+  const text = document.getElementById('city-input').value.trim();
+  if (text) flyToPlace(text);
+}
+
+function flyToPlace(name) {
+  state.currentCity = name;
+  state.selectedSite = { name, address: '', lat: 0, lng: 0 };
+
+  const coords = CITY_COORDS[name];
+  if (coords) {
+    state.selectedSite.lat = coords[0];
+    state.selectedSite.lng = coords[1];
+    enterFreePan(coords[0], coords[1], 14, name);
+    return;
+  }
+
+  // Unknown text — try Nominatim via the server proxy, fall back to London if it fails.
+  document.getElementById('search-loading').style.display = 'flex';
+  fetch('/api/geocode?q=' + encodeURIComponent(name))
+    .then(r => r.json())
+    .then(g => {
+      document.getElementById('search-loading').style.display = 'none';
+      if (g && g.lat && g.lng) {
+        state.selectedSite.lat = g.lat;
+        state.selectedSite.lng = g.lng;
+        enterFreePan(g.lat, g.lng, 16, g.displayName || name);
+      } else {
+        alert('Couldn\'t find that place. Try a city name or a UK address.');
+      }
+    })
+    .catch(() => {
+      document.getElementById('search-loading').style.display = 'none';
+      alert('Geocoding failed. Try a city name or a UK address.');
+    });
+}
+
+function enterFreePan(lat, lng, zoom, label) {
+  document.getElementById('step2-site-name').textContent = label || 'Free pan mode';
+  document.getElementById('configure-btn').disabled = true;
+  state.flyZoom = zoom || 14;
+  goToStep(2);
+  initSiteViewer(parseFloat(lat), parseFloat(lng));
+}
+
+function togglePresetSites() {
+  const grid = document.getElementById('site-results');
+  const btn = document.getElementById('preset-sites-toggle');
+  const isOpen = grid.style.display !== 'none' && grid.children.length > 0;
+  if (isOpen) {
+    grid.style.display = 'none';
+    document.getElementById('overview-map-wrap').style.display = 'none';
+    btn.innerHTML = '&#9776; Preset sites &mdash; show curated brownfield list';
+    return;
+  }
+  // Need a city to fetch presets for; use the chip city or default to Leeds (the only fully scraped one)
+  const city = (document.getElementById('city-input').value.trim()) || 'Leeds';
+  state.currentCity = city;
+  searchCity(city);
+  btn.innerHTML = '&#10005; Hide preset sites';
 }
 
 async function searchCity(city) {
   state.currentCity = city;
   document.getElementById('search-loading').style.display = 'flex';
   document.getElementById('site-results').innerHTML = '';
+  document.getElementById('site-results').style.display = '';
   document.getElementById('overview-map-wrap').style.display = 'none';
 
   try {
@@ -162,7 +232,7 @@ async function searchCity(city) {
     document.getElementById('search-loading').style.display = 'none';
 
     if (!data.sites || data.sites.length === 0) {
-      document.getElementById('site-results').innerHTML = '<p class="empty-msg">No sites found for this city. Try another.</p>';
+      document.getElementById('site-results').innerHTML = '<p class="empty-msg">No curated sites for this city yet. Pan around the 3D map and capture your own.</p>';
       return;
     }
 
@@ -256,7 +326,6 @@ function selectSite(site) {
   document.getElementById('step2-site-name').textContent = `${site.name}${site.address ? ' — ' + site.address : ''}`;
   document.getElementById('configure-btn').disabled = true;
   goToStep(2);
-  loadEnabledOverlays(site);
   initSiteViewer(parseFloat(site.lat), parseFloat(site.lng));
 }
 
@@ -303,25 +372,31 @@ async function initSiteViewer(lat, lng) {
     viewer.scene.primitives.add(tileset);
     state.siteTileset = tileset;
 
-    // Lock the camera to orbit a fixed target (the site lat/lng)
+    // Free-pan mode: fly to the chosen lat/lng, then let the user roam.
     const center = Cesium.Cartesian3.fromDegrees(lng, lat, 0);
     state.siteViewerCenter = center;
 
-    viewer.camera.lookAt(center, new Cesium.HeadingPitchRange(
-      Cesium.Math.toRadians(VIEWER_DEFAULTS.headingDeg),
-      Cesium.Math.toRadians(VIEWER_DEFAULTS.pitchDeg),
-      VIEWER_DEFAULTS.rangeMeters
-    ));
+    // Choose an initial camera height based on the requested zoom hint.
+    // City overview ~14 → 1500m; address ~16 → 600m.
+    const initialAltitude = state.flyZoom >= 16 ? 600 : (state.flyZoom >= 15 ? 900 : 1500);
+    viewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(lng, lat, initialAltitude),
+      orientation: {
+        heading: Cesium.Math.toRadians(VIEWER_DEFAULTS.headingDeg),
+        pitch:   Cesium.Math.toRadians(VIEWER_DEFAULTS.pitchDeg),
+        roll:    0,
+      },
+      duration: 1.5,
+      complete: () => { document.getElementById('configure-btn').disabled = false; },
+    });
 
-    // Camera control: orbit + zoom + tilt; NO pan/translate, NO free-look
+    // Free pan + tilt + rotate + zoom. No locked target.
     const ctl = viewer.scene.screenSpaceCameraController;
-    ctl.enableTranslate = false;
+    ctl.enableTranslate = true;
     ctl.enableLook      = false;
     ctl.enableRotate    = true;
     ctl.enableTilt      = true;
     ctl.enableZoom      = true;
-    // Only allow zoom toward the lookAt target, not toward arbitrary cursor points
-    ctl.zoomEventTypes  = [Cesium.CameraEventType.WHEEL, Cesium.CameraEventType.PINCH];
 
     // Update readout on every render tick
     viewer.scene.postRender.addEventListener(updateViewerReadout);
@@ -347,20 +422,28 @@ function updateViewerReadout() {
 
 function resetSiteViewer() {
   const viewer = state.siteViewer;
-  if (!viewer || !state.siteViewerCenter) return;
-  viewer.camera.lookAt(state.siteViewerCenter, new Cesium.HeadingPitchRange(
-    Cesium.Math.toRadians(VIEWER_DEFAULTS.headingDeg),
-    Cesium.Math.toRadians(VIEWER_DEFAULTS.pitchDeg),
-    VIEWER_DEFAULTS.rangeMeters
-  ));
+  const site = state.selectedSite;
+  if (!viewer || !site) return;
+  viewer.camera.flyTo({
+    destination: Cesium.Cartesian3.fromDegrees(site.lng, site.lat, state.flyZoom >= 16 ? 600 : 1500),
+    orientation: {
+      heading: Cesium.Math.toRadians(VIEWER_DEFAULTS.headingDeg),
+      pitch:   Cesium.Math.toRadians(VIEWER_DEFAULTS.pitchDeg),
+      roll: 0,
+    },
+    duration: 0.8,
+  });
 }
 
 function topDownSiteViewer() {
   const viewer = state.siteViewer;
-  if (!viewer || !state.siteViewerCenter) return;
-  viewer.camera.lookAt(state.siteViewerCenter, new Cesium.HeadingPitchRange(
-    0, Cesium.Math.toRadians(-89.9), VIEWER_DEFAULTS.rangeMeters
-  ));
+  const site = state.selectedSite;
+  if (!viewer || !site) return;
+  viewer.camera.flyTo({
+    destination: Cesium.Cartesian3.fromDegrees(site.lng, site.lat, state.flyZoom >= 16 ? 500 : 1200),
+    orientation: { heading: 0, pitch: Cesium.Math.toRadians(-89.9), roll: 0 },
+    duration: 0.8,
+  });
 }
 
 async function useThisView() {

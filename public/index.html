@@ -18,9 +18,9 @@
   <header class="site-header">
     <div class="header-inner">
       <div class="header-brand">
-        <span class="brand-icon">&#127959;</span>
+        <span class="brand-icon">&#128247;</span>
         <span class="brand-name">Site Scout</span>
-        <span class="brand-tag">Architectural Feasibility</span>
+        <span class="brand-tag">AI Architectural Photographs</span>
       </div>
       <div class="header-right">
         <div id="credit-display" class="credit-display" style="display:none">
@@ -47,48 +47,55 @@
 
   <main class="main">
 
-    <!-- STEP 1: Find Sites -->
+    <!-- STEP 1: City picker / address search -->
     <section class="step active" id="step-1">
       <div class="step-hero">
-        <h1>Find a site.<br>Design a building.<br>See it built.</h1>
-        <p class="step-hero-sub">Choose a UK city to explore real vacant and brownfield sites. Pick one and generate photorealistic photograph of your proposed building.</p>
+        <h1>Photograph any building<br>anywhere on Earth.</h1>
+        <p class="step-hero-sub">Pick a city or type any address. Pan the 3D world to find a spot. Capture it. Get back a photorealistic photograph of the building you imagine there.</p>
       </div>
 
       <div class="search-box">
         <form id="search-form" onsubmit="handleSearch(event)">
-          <input type="text" id="city-input" placeholder="Enter a city (e.g. Leeds, Manchester...)" autocomplete="off">
-          <button type="submit" class="btn-primary">Find Sites</button>
+          <input type="text" id="city-input" placeholder="Enter a city or address (e.g. Leeds, 10 Downing St)" autocomplete="off">
+          <button type="submit" class="btn-primary">Fly there &#8594;</button>
         </form>
       </div>
 
       <div class="city-chips">
         <span class="chips-label">Quick pick:</span>
-        <button class="chip" onclick="quickSearch('London')">London</button>
-        <button class="chip" onclick="quickSearch('Manchester')">Manchester</button>
-        <button class="chip" onclick="quickSearch('Leeds')">Leeds</button>
-        <button class="chip" onclick="quickSearch('Birmingham')">Birmingham</button>
-        <button class="chip" onclick="quickSearch('Bristol')">Bristol</button>
-        <button class="chip" onclick="quickSearch('Sheffield')">Sheffield</button>
-        <button class="chip" onclick="quickSearch('Liverpool')">Liverpool</button>
-        <button class="chip" onclick="quickSearch('Edinburgh')">Edinburgh</button>
-        <button class="chip" onclick="quickSearch('Glasgow')">Glasgow</button>
-        <button class="chip" onclick="quickSearch('Newcastle')">Newcastle</button>
-        <button class="chip" onclick="quickSearch('Nottingham')">Nottingham</button>
-        <button class="chip" onclick="quickSearch('Cardiff')">Cardiff</button>
-        <button class="chip" onclick="quickSearch('York')">York</button>
-        <button class="chip" onclick="quickSearch('Leicester')">Leicester</button>
-        <button class="chip" onclick="quickSearch('Bradford')">Bradford</button>
+        <button class="chip" onclick="quickFlyTo('London')">London</button>
+        <button class="chip" onclick="quickFlyTo('Manchester')">Manchester</button>
+        <button class="chip" onclick="quickFlyTo('Leeds')">Leeds</button>
+        <button class="chip" onclick="quickFlyTo('Birmingham')">Birmingham</button>
+        <button class="chip" onclick="quickFlyTo('Bristol')">Bristol</button>
+        <button class="chip" onclick="quickFlyTo('Sheffield')">Sheffield</button>
+        <button class="chip" onclick="quickFlyTo('Liverpool')">Liverpool</button>
+        <button class="chip" onclick="quickFlyTo('Edinburgh')">Edinburgh</button>
+        <button class="chip" onclick="quickFlyTo('Glasgow')">Glasgow</button>
+        <button class="chip" onclick="quickFlyTo('Newcastle')">Newcastle</button>
+        <button class="chip" onclick="quickFlyTo('Nottingham')">Nottingham</button>
+        <button class="chip" onclick="quickFlyTo('Cardiff')">Cardiff</button>
+        <button class="chip" onclick="quickFlyTo('York')">York</button>
+        <button class="chip" onclick="quickFlyTo('Leicester')">Leicester</button>
+        <button class="chip" onclick="quickFlyTo('Bradford')">Bradford</button>
+      </div>
+
+      <!-- Optional: curated brownfield/vacant site list, hidden behind a button -->
+      <div class="preset-sites-section">
+        <button class="btn-secondary" type="button" id="preset-sites-toggle" onclick="togglePresetSites()">
+          &#9776; Preset sites &mdash; show curated brownfield list
+        </button>
       </div>
 
       <div id="search-loading" class="loading-msg" style="display:none">
-        <div class="spinner"></div> Searching for sites...
+        <div class="spinner"></div> Loading curated sites&hellip;
       </div>
 
       <div id="overview-map-wrap" style="display:none">
         <div id="overview-map" class="overview-map"></div>
       </div>
 
-      <div id="site-results" class="site-grid"></div>
+      <div id="site-results" class="site-grid" style="display:none"></div>
     </section>
 
     <!-- STEP 2: Scout Site -->
@@ -101,7 +108,7 @@
         </div>
       </div>
 
-      <p class="capture-instructions">Drag to orbit, scroll to zoom. The view stays locked on your site &mdash; pick the angle you want as the base for your photograph.</p>
+      <p class="capture-instructions">Pan, zoom, rotate &mdash; the world is yours. Find a building or empty plot, frame the shot you want, then capture it.</p>
 
       <div class="viewer-shell">
         <div id="site-viewer" class="site-viewer"></div>
@@ -119,28 +126,9 @@
         <div id="viewer-error" class="viewer-error" style="display:none"></div>
       </div>
 
-      <!-- Overlay data toggles + panels (Phase 1) -->
-      <div class="overlay-section" id="overlay-section" style="display:none">
-        <div class="overlay-toggles" id="overlay-toggles">
-          <button class="toggle-chip" data-overlay="flood"     type="button" aria-pressed="true">
-            <span class="toggle-icon">&#9888;&#65039;</span><span class="toggle-label">Flood Risk</span><span class="toggle-state">ON</span>
-          </button>
-          <button class="toggle-chip" data-overlay="amenities" type="button" aria-pressed="true">
-            <span class="toggle-icon">&#127939;</span><span class="toggle-label">Walkable amenities</span><span class="toggle-state">ON</span>
-          </button>
-          <button class="toggle-chip" data-overlay="listed"    type="button" aria-pressed="false">
-            <span class="toggle-icon">&#127963;&#65039;</span><span class="toggle-label">Listed buildings</span><span class="toggle-state">off</span>
-          </button>
-          <button class="toggle-chip" data-overlay="solar"     type="button" aria-pressed="false">
-            <span class="toggle-icon">&#9728;&#65039;</span><span class="toggle-label">Solar potential</span><span class="toggle-state">off</span>
-          </button>
-        </div>
-        <div class="overlay-panels" id="overlay-panels"></div>
-      </div>
-
       <div class="step-actions" id="step2-actions">
-        <p class="selected-capture-hint">Lock in this angle to use as the base for your photograph generation.</p>
-        <button class="btn-primary" id="configure-btn" type="button" disabled>Use this view &#8594;</button>
+        <p class="selected-capture-hint">When you've framed the shot you want, capture it as the base for your photograph.</p>
+        <button class="btn-primary" id="configure-btn" type="button" disabled>Capture this view &#8594;</button>
       </div>
 
       <!-- Boundary editor: hidden until "Use this view" captures the canvas -->
