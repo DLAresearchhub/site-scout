@@ -1024,6 +1024,12 @@ body {
   backdrop-filter: blur(6px);
 }
 .viewer-btn:hover { background: #fff; }
+.viewer-btn.icon-btn {
+  width: 32px;
+  padding: 6px 0;
+  text-align: center;
+  font-size: 14px;
+}
 
 .viewer-loading, .viewer-error {
   position: absolute; inset: 0;

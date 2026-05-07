@@ -108,7 +108,12 @@
         </div>
       </div>
 
-      <p class="capture-instructions">Pan, zoom, rotate &mdash; the world is yours. Find a building or empty plot, frame the shot you want, then capture it.</p>
+      <p class="capture-instructions">
+        <strong>Left-drag</strong> = pan &middot;
+        <strong>Right-drag</strong> = rotate &amp; tilt &middot;
+        <strong>Scroll</strong> = zoom &middot;
+        or use the buttons on the viewer to rotate / tilt.
+      </p>
 
       <div class="viewer-shell">
         <div id="site-viewer" class="site-viewer"></div>
@@ -118,6 +123,10 @@
             <span class="readout-pill" id="readout-pitch">30&deg; tilt</span>
           </div>
           <div class="viewer-controls">
+            <button class="viewer-btn icon-btn" id="viewer-rot-l-btn" type="button" title="Rotate left">&#8630;</button>
+            <button class="viewer-btn icon-btn" id="viewer-rot-r-btn" type="button" title="Rotate right">&#8631;</button>
+            <button class="viewer-btn icon-btn" id="viewer-tilt-up-btn"   type="button" title="Tilt up">&#9650;</button>
+            <button class="viewer-btn icon-btn" id="viewer-tilt-down-btn" type="button" title="Tilt down">&#9660;</button>
             <button class="viewer-btn" id="viewer-reset-btn" type="button" title="Reset view">&#8634; Reset</button>
             <button class="viewer-btn" id="viewer-top-btn" type="button" title="Top-down view">Top-down</button>
           </div>

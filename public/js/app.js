@@ -38,12 +38,20 @@ document.addEventListener('DOMContentLoaded', () => {
   // the file for any future re-enable, just don't init them here.)
 
   // Wire viewer overlay buttons
-  const resetBtn = document.getElementById('viewer-reset-btn');
-  const topBtn   = document.getElementById('viewer-top-btn');
-  const useBtn   = document.getElementById('configure-btn');
-  if (resetBtn) resetBtn.addEventListener('click', () => resetSiteViewer());
-  if (topBtn)   topBtn.addEventListener('click', () => topDownSiteViewer());
-  if (useBtn)   useBtn.addEventListener('click', () => useThisView());
+  const resetBtn  = document.getElementById('viewer-reset-btn');
+  const topBtn    = document.getElementById('viewer-top-btn');
+  const useBtn    = document.getElementById('configure-btn');
+  const rotLBtn   = document.getElementById('viewer-rot-l-btn');
+  const rotRBtn   = document.getElementById('viewer-rot-r-btn');
+  const tiltUpBtn = document.getElementById('viewer-tilt-up-btn');
+  const tiltDnBtn = document.getElementById('viewer-tilt-down-btn');
+  if (resetBtn)  resetBtn.addEventListener('click', () => resetSiteViewer());
+  if (topBtn)    topBtn.addEventListener('click',   () => topDownSiteViewer());
+  if (useBtn)    useBtn.addEventListener('click',   () => useThisView());
+  if (rotLBtn)   rotLBtn.addEventListener('click',  () => nudgeViewer('rotateLeft'));
+  if (rotRBtn)   rotRBtn.addEventListener('click',  () => nudgeViewer('rotateRight'));
+  if (tiltUpBtn) tiltUpBtn.addEventListener('click',() => nudgeViewer('tiltUp'));
+  if (tiltDnBtn) tiltDnBtn.addEventListener('click',() => nudgeViewer('tiltDown'));
 
   // Boundary editor buttons
   const bClear = document.getElementById('boundary-clear-btn');
@@ -390,13 +398,20 @@ async function initSiteViewer(lat, lng) {
       complete: () => { document.getElementById('configure-btn').disabled = false; },
     });
 
-    // Free pan + tilt + rotate + zoom. No locked target.
+    // Free pan + rotate + tilt + zoom. Rebind so right-drag actually rotates
+    // the camera (Cesium's default is right-drag = zoom, which surprises users).
     const ctl = viewer.scene.screenSpaceCameraController;
     ctl.enableTranslate = true;
-    ctl.enableLook      = false;
-    ctl.enableRotate    = true;
+    ctl.enableRotate    = true;   // LEFT_DRAG: rotate globe under camera (feels like pan when close)
     ctl.enableTilt      = true;
+    ctl.enableLook      = true;   // we'll bind this to RIGHT_DRAG below for rotate/tilt the camera in place
     ctl.enableZoom      = true;
+    ctl.lookEventTypes  = [Cesium.CameraEventType.RIGHT_DRAG];
+    ctl.zoomEventTypes  = [Cesium.CameraEventType.WHEEL, Cesium.CameraEventType.PINCH];
+    ctl.tiltEventTypes  = [
+      Cesium.CameraEventType.MIDDLE_DRAG,
+      { eventType: Cesium.CameraEventType.LEFT_DRAG, modifier: Cesium.KeyboardEventModifier.CTRL },
+    ];
 
     // Update readout on every render tick
     viewer.scene.postRender.addEventListener(updateViewerReadout);
@@ -443,6 +458,30 @@ function topDownSiteViewer() {
     destination: Cesium.Cartesian3.fromDegrees(site.lng, site.lat, state.flyZoom >= 16 ? 500 : 1200),
     orientation: { heading: 0, pitch: Cesium.Math.toRadians(-89.9), roll: 0 },
     duration: 0.8,
+  });
+}
+
+// Explicit rotate / tilt nudges so users don't have to discover Cesium's
+// keybindings. Each click fires a short flyTo that adjusts heading or pitch
+// while keeping the camera position the same.
+function nudgeViewer(action) {
+  const viewer = state.siteViewer;
+  if (!viewer) return;
+  const cam = viewer.camera;
+  const headingStep = Math.PI / 12;   // 15°
+  const pitchStep   = Math.PI / 18;   // 10°
+  let heading = cam.heading;
+  let pitch   = cam.pitch;
+
+  if (action === 'rotateLeft')  heading -= headingStep;
+  if (action === 'rotateRight') heading += headingStep;
+  if (action === 'tiltUp')      pitch = Math.min( Cesium.Math.toRadians(-1),  pitch + pitchStep);
+  if (action === 'tiltDown')    pitch = Math.max( Cesium.Math.toRadians(-89), pitch - pitchStep);
+
+  cam.flyTo({
+    destination: cam.position.clone(),
+    orientation: { heading, pitch, roll: 0 },
+    duration: 0.25,
   });
 }
 
