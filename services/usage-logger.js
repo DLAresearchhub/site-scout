@@ -72,6 +72,21 @@ function init() {
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_captures_site_id ON captures(site_id);
+
+      CREATE TABLE IF NOT EXISTS public_posts (
+        id            TEXT PRIMARY KEY,
+        city          TEXT,
+        building_type TEXT,
+        preset_label  TEXT,
+        pill_state    TEXT,
+        original_url  TEXT,
+        primary_url   TEXT,
+        all_urls      TEXT,
+        shared        INTEGER DEFAULT 0,
+        created_at    TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_public_posts_created ON public_posts(created_at);
+      CREATE INDEX IF NOT EXISTS idx_public_posts_shared  ON public_posts(shared, created_at);
     `);
 
     // Add user_id column to generations if it doesn't exist yet (safe migration)
@@ -271,4 +286,76 @@ module.exports = {
   cacheCapture,
   getCachedCaptures,
   getCaptureById,
+  createPost,
+  getPostById,
+  listPosts,
+  setPostShared,
 };
+
+// ── Public posts (permalink + gallery) ───────────────────────────────────────
+
+function _shortId() {
+  // 10-char URL-safe random id
+  const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+  let s = '';
+  for (let i = 0; i < 10; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+
+function createPost(data) {
+  if (!db) return null;
+  const id = _shortId();
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO public_posts
+      (id, city, building_type, preset_label, pill_state, original_url, primary_url, all_urls, shared, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    data.city || null,
+    data.building_type || null,
+    data.preset_label || null,
+    JSON.stringify(data.pill_state || {}),
+    data.original_url || null,
+    data.primary_url || null,
+    JSON.stringify(data.all_urls || []),
+    data.shared ? 1 : 0,
+    now
+  );
+  return id;
+}
+
+function getPostById(id) {
+  if (!db) return null;
+  const row = db.prepare('SELECT * FROM public_posts WHERE id = ?').get(id);
+  if (!row) return null;
+  return {
+    id: row.id,
+    city: row.city,
+    building_type: row.building_type,
+    preset_label: row.preset_label,
+    pill_state: row.pill_state ? JSON.parse(row.pill_state) : {},
+    original_url: row.original_url,
+    primary_url: row.primary_url,
+    all_urls: row.all_urls ? JSON.parse(row.all_urls) : [],
+    shared: !!row.shared,
+    created_at: row.created_at,
+  };
+}
+
+function listPosts({ limit = 24, offset = 0, sharedOnly = true } = {}) {
+  if (!db) return [];
+  const rows = db.prepare(`
+    SELECT id, city, building_type, preset_label, original_url, primary_url, created_at
+    FROM public_posts
+    WHERE shared = ${sharedOnly ? 1 : 0} OR ${sharedOnly ? 0 : 1} = 1
+    ORDER BY created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(limit, offset);
+  return rows;
+}
+
+function setPostShared(id, shared) {
+  if (!db) return;
+  db.prepare('UPDATE public_posts SET shared = ? WHERE id = ?').run(shared ? 1 : 0, id);
+}

@@ -403,6 +403,46 @@ async function processGenerationJob(jobId, params) {
   }
 }
 
+// ── Public posts (permalinks + gallery) ─────────────────────────────────────
+
+router.post('/share', (req, res) => {
+  try {
+    const { city, building_type, preset_label, pill_state, original_url, primary_url, all_urls, shared } = req.body || {};
+    if (!primary_url) return res.status(400).json({ error: 'primary_url required' });
+    const id = usageLogger.createPost({
+      city, building_type, preset_label, pill_state,
+      original_url, primary_url, all_urls,
+      shared: !!shared,
+    });
+    res.json({ id, permalink: `/p/${id}` });
+  } catch (error) {
+    console.error('Error creating post:', error);
+    res.status(500).json({ error: 'Failed to save post' });
+  }
+});
+
+router.post('/share/:id/toggle', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { shared } = req.body || {};
+    usageLogger.setPostShared(id, !!shared);
+    res.json({ id, shared: !!shared });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/post/:id', (req, res) => {
+  const post = usageLogger.getPostById(req.params.id);
+  if (!post) return res.status(404).json({ error: 'Not found' });
+  res.json(post);
+});
+
+router.get('/explore', (req, res) => {
+  const limit  = Math.min(60, parseInt(req.query.limit  || '24', 10));
+  const offset = Math.max(0, parseInt(req.query.offset || '0', 10));
+  const posts = usageLogger.listPosts({ limit, offset, sharedOnly: true });
+  res.json({ posts });
+});
+
 // ── Follow-up generation processor ──────────────────────────────────────────
 
 async function processFollowupJob(jobId, params) {

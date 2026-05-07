@@ -25,6 +25,12 @@ const state = {
 // ── Init ──────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
+  // SPA routing — handle /explore and /p/:id before the wizard inits
+  const path = location.pathname;
+  if (path === '/explore') { renderExplore(); return; }
+  const pm = path.match(/^\/p\/([a-z0-9]+)\/?$/);
+  if (pm) { renderSinglePost(pm[1]); return; }
+
   // Init pill UI
   const pillContainer = document.getElementById('pill-rows-container');
   window.PromptBuilder.initPillUI(pillContainer, onPillStateChange);
@@ -48,6 +54,12 @@ document.addEventListener('DOMContentLoaded', () => {
   if (resetBtn)  resetBtn.addEventListener('click', () => resetSiteViewer());
   if (topBtn)    topBtn.addEventListener('click',   () => topDownSiteViewer());
   if (useBtn)    useBtn.addEventListener('click',   () => useThisView());
+
+  // Share toggle + permalink button (Step 5)
+  const shareToggle = document.getElementById('results-share-toggle');
+  const permalinkBtn = document.getElementById('results-permalink-btn');
+  if (shareToggle) shareToggle.addEventListener('change', () => onShareToggleChange());
+  if (permalinkBtn) permalinkBtn.addEventListener('click', () => copyPermalink());
   if (rotLBtn)   rotLBtn.addEventListener('click',  () => nudgeViewer('rotateLeft'));
   if (rotRBtn)   rotRBtn.addEventListener('click',  () => nudgeViewer('rotateRight'));
   if (tiltUpBtn) tiltUpBtn.addEventListener('click',() => nudgeViewer('tiltUp'));
@@ -1043,21 +1055,23 @@ function onPillStateChange(pillState) {
 }
 
 function updatePromptPreview(pillState) {
-  const ctx = {
-    hasBoundary: !!state.hasBoundary,
-    refCount: (state.referenceImages && state.referenceImages.length) || 0,
-    presetLabel: state.activePreset ? state.activePreset.label : null,
-  };
-  const segs = window.PromptBuilder.buildPreviewSegments(pillState, ctx);
   const container = document.getElementById('prompt-preview-segments');
-
-  if (segs.length === 0) {
+  if (!pillState.building_type) {
     container.innerHTML = '<span class="preview-placeholder">Select a building type and options to see your prompt build here…</span>';
-  } else {
-    container.innerHTML = segs.map(s =>
-      `<span class="prompt-segment seg-${s.kind || 'design'}">${escHtml(s.text)}</span>`
-    ).join('');
+    const rawEl = document.getElementById('raw-prompt-text');
+    if (rawEl) rawEl.textContent = '';
+    return;
   }
+
+  // Render the FULL prompt as colour-coded prose blocks (replaces the chip
+  // preview). Each block corresponds to a section of the prompt template.
+  const sections = buildPromptSectionsForPreview(pillState);
+  container.innerHTML = sections.map(s =>
+    `<div class="prompt-block blk-${s.kind}"><span class="prompt-block-label">${s.label}</span><p class="prompt-block-body">${escHtml(s.body)}</p></div>`
+  ).join('');
+
+  const rawEl = document.getElementById('raw-prompt-text');
+  if (rawEl) rawEl.textContent = sections.map(s => s.body).join('\n\n');
 
   // Raw prompt
   const rawEl = document.getElementById('raw-prompt-text');
@@ -1067,6 +1081,133 @@ function updatePromptPreview(pillState) {
   } else {
     rawEl.textContent = '';
   }
+}
+
+// Builds the prompt as a list of {kind, label, body} sections so the right-
+// pane can render each as a colour-coded prose block. Combines client knowledge
+// of state (boundary, refs, preset, pills) with the same wording as the server.
+function buildPromptSectionsForPreview(pillState) {
+  const BUILDING_DESCRIPTORS = {
+    'Office': 'commercial office building', 'Residential': 'residential apartment building',
+    'Mixed Use': 'mixed-use development with retail at ground floor and residential above',
+    'Retail': 'retail development', 'School': 'educational building', 'Hotel': 'hotel',
+    'Industrial': 'light industrial and workspace building', 'Healthcare': 'healthcare facility',
+  };
+  const TIME_MAP = {
+    'Dawn':'just after dawn, the sun low on the horizon casting long, soft pink-orange light',
+    'Morning':'in mid-morning daylight with long, crisp shadows from a low sun',
+    'Midday':'in midday sun with short, hard shadows directly beneath the building',
+    'Golden Hour':'during golden hour, the sun low and warm, casting long directional shadows',
+    'Dusk':'at dusk, deep blue twilight sky with warm interior lighting glowing through windows',
+    'Night':'at night, fully illuminated interiors and discreet exterior uplighting against a dark sky',
+  };
+  const WEATHER_MAP = {
+    'Clear':'under a clear blue sky', 'Overcast':'under soft, even overcast light',
+    'Dramatic clouds':'with dramatic broken cloud cover and a dynamic sky',
+    'Rain-washed':'just after rain, with reflective wet surfaces and damp pavements',
+  };
+  const SURROUNDINGS_MAP = {
+    'Dense urban':'in a dense urban context surrounded by tall buildings and active street life',
+    'Mixed urban':'in a mixed urban neighbourhood of mid-rise buildings and active streets',
+    'Suburban':'in a suburban context with lower-density housing and green space nearby',
+    'Green belt':'at the edge of a green belt with open countryside visible beyond',
+  };
+  const LANDSCAPING_MAP = {
+    'Very Green':'Extensive landscaping — mature trees, planted street edges, green walls and roof gardens.',
+    'Balanced':'Balanced landscaping — tree-lined paths, planters along the street edge, mixed soft and hard surfaces.',
+    'Minimal':'Minimal planting — clean hardscape, occasional specimen trees, simple ground treatment.',
+    'Very Paved':'Predominantly paved hardscape — geometric plazas, granite setts, almost no vegetation.',
+  };
+
+  const p = pillState || {};
+  const skip = p.skip || {};
+  const descriptor = BUILDING_DESCRIPTORS[p.building_type] || (p.building_type || 'building').toLowerCase();
+  const stories_s = p.stories ? `${p.stories}-storey ` : '';
+  const style_s   = (!skip.arch_style && p.arch_style) ? `${p.arch_style.toLowerCase()} ` : '';
+  const facade_s  = (!skip.facade && p.facade) ? ` Facade: ${p.facade.toLowerCase()}.` : '';
+  const roof_s    = (!skip.roof && p.roof) ? ` Roof: ${p.roof.toLowerCase()}.` : '';
+  const surr_s    = (!skip.surroundings && p.surroundings) ? ` Building sits ${SURROUNDINGS_MAP[p.surroundings] || p.surroundings.toLowerCase()}.` : '';
+  const time_s    = TIME_MAP[p.time_of_day] || (p.time_of_day ? `at ${p.time_of_day.toLowerCase()}` : 'in soft natural daylight');
+  const wx_s      = (!skip.weather && p.weather) ? ` ${WEATHER_MAP[p.weather] || p.weather.toLowerCase()}` : '';
+  const landscape = (!skip.landscaping && p.landscaping) ? (LANDSCAPING_MAP[p.landscaping] || p.landscaping) : '';
+
+  const sections = [];
+
+  sections.push({
+    kind: 'opening', label: 'Opening',
+    body: `Please reimagine this low quality photoshop collage of a ${descriptor} on the empty site shown as a real, high-resolution photograph of a newly completed, inhabited environment captured by a professional architectural photographer.`,
+  });
+
+  sections.push({
+    kind: 'camera', label: 'Camera & framing',
+    body: 'Use EXACTLY the same camera position, angle, framing, bearing, and aspect ratio as the source photograph. Do not change the viewpoint, zoom, or pitch. The output must be a photograph captured from this same vantage.',
+  });
+
+  if (state.hasBoundary) {
+    sections.push({
+      kind: 'boundary', label: '⚠ Boundary (inpainting)',
+      body: 'INPAINTING TASK: A bright red outline has been drawn on the source image marking the build site. EDIT only the space INSIDE that red outline by inserting the new building there. The red line itself is a marker — REMOVE it completely from the output image; it must NOT appear in the final photograph. Pixels OUTSIDE the red outline must remain pixel-perfect identical to the source — do not add, remove, modify, or restyle anything beyond the outline. Treat this as a precise inpainting / region-replace operation.',
+    });
+  } else {
+    sections.push({
+      kind: 'site', label: 'Site & geometry',
+      body: 'Place the new building only on the empty plot visible in the source image. Do not extend it onto neighbouring land. Preserve all existing geometry — the site boundary, surrounding buildings, paths, entrances, kerbs, vegetation, and circulation — exactly as shown.',
+    });
+  }
+
+  sections.push({
+    kind: 'preserve', label: 'Preserve exactly',
+    body: 'Every neighbouring building must remain pixel-perfect identical to the source — same height, same parapet line, same facade material, same window grid, same roofline, same colour. Roads, kerbs, pavements, road markings, street furniture, parked vehicles, trees, hedges, planters, the horizon line and the sky must remain exactly as shown. The only change anywhere in the image is the new building inserted on the site.',
+  });
+
+  sections.push({
+    kind: 'arch', label: 'Architecture & materials',
+    body: `New, ${stories_s}${style_s}${descriptor}.${facade_s}${roof_s}${surr_s} Newly constructed and well maintained. Clean, uniform surfaces. High-resolution material definition. Sharp edges and precise junctions. Accurate light response for glass, metal, stone and concrete. Do not introduce wear, weathering, dirt, stains, damage, or surface imperfections.`,
+  });
+
+  if (state.activePreset && state.activePreset.promptAddendum) {
+    sections.push({
+      kind: 'preset', label: `Preset: ${state.activePreset.label}`,
+      body: state.activePreset.promptAddendum,
+    });
+  }
+
+  if (landscape) {
+    sections.push({ kind: 'landscape', label: 'Landscape', body: landscape });
+  }
+
+  if (state.referenceImages && state.referenceImages.length > 0) {
+    sections.push({
+      kind: 'refs', label: `References (${state.referenceImages.length})`,
+      body: 'Reference influences (apply ONLY to the new building, never to anything around it): the uploaded images will be auto-described by Gemini text-vision at generation time and the descriptions inserted here. Lift the materials, fenestration patterns, and detail treatments and apply them to the new building. References must NOT change neighbouring buildings.',
+    });
+  }
+
+  sections.push({
+    kind: 'lighting', label: 'Lighting & exposure',
+    body: `Captured ${time_s}${wx_s}. Sun position, shadow length, direction and softness physically consistent with that time. Balanced ambient illumination with realistic bounce light. Realistic reflections in glazing and polished materials. Lighting is physically accurate, neutral, and non-dramatic.`,
+  });
+
+  sections.push({
+    kind: 'people', label: 'People',
+    body: 'Introduce people naturally where the environment supports human presence — occupants, passers-by, staff, visitors. Candid and unposed; contributing scale and life without appearing staged. Close-range photographic realism: visible skin texture with pores and natural tonal variation, sharp facial detail without stylisation, individually resolved hair strands with realistic light interaction, accurate fabric textures with seams, folds and material weight, natural posture and movement. Subtle motion blur only on people moving naturally; stationary architecture and faces remain sharp.',
+  });
+
+  sections.push({
+    kind: 'cam2', label: 'Camera body',
+    body: 'High-end full-frame body. 35mm prime lens at f/4.5. Shutter speed appropriate to the available light and subtle human motion. Clean low ISO. Realistic depth of field with focus on the new building. Neutral white balance, accurate colour. Clean exposure with restrained contrast. No cinematic grading, no artistic filters, no stylised effects.',
+  });
+
+  if (p.free_text && p.free_text.trim()) {
+    sections.push({ kind: 'note', label: 'Your notes', body: p.free_text.trim() });
+  }
+
+  sections.push({
+    kind: 'closing', label: 'Closing',
+    body: 'Treat the scene as a real place being photographed, not modified or enhanced. The result must be indistinguishable from a real, professionally captured photograph.',
+  });
+
+  return sections;
 }
 
 // Mirror of services/prompt-builder.js → buildPrompt(). Keep in sync.
@@ -1131,7 +1272,7 @@ function buildClientPromptPreview(pillState) {
   const free      = free_text && free_text.trim() ? `\n\nAdditional notes: ${free_text.trim()}` : '';
 
   const boundaryClause = state.hasBoundary
-    ? 'A red outline has been drawn on the source image marking the build site. Place the new building strictly inside that red outline. Pixels outside the red outline must remain pixel-perfect identical to the source — do not add, remove, modify, or restyle anything beyond the outline.'
+    ? 'INPAINTING TASK: A bright red outline has been drawn on the source image marking the build site. EDIT only the space INSIDE that red outline by inserting the new building there. The red line itself is a marker — REMOVE it completely from the output image; it must NOT appear in the final photograph. Pixels OUTSIDE the red outline must remain pixel-perfect identical to the source — do not add, remove, modify, or restyle anything beyond the outline. Treat this as a precise inpainting / region-replace operation.'
     : 'Place the new building only on the empty plot visible in the source image. Do not extend it onto neighbouring land.';
 
   const refCount = state.referenceImages ? state.referenceImages.length : 0;
@@ -1381,6 +1522,14 @@ function displayResults(images) {
   state.chosenResultUrl = null;
   state.followupJobId = null;
 
+  // Auto-save the generation as a permalink AND share to public Explore by
+  // default. User can untoggle the share switch on Step 5 if they want it
+  // private — the toggle calls /api/share/:id/toggle.
+  state.lastImages = images;
+  const shareToggle = document.getElementById('results-share-toggle');
+  if (shareToggle) shareToggle.checked = true;
+  saveGenerationPost(true);
+
   // Grid: ALL images (including the primary) get a "More from this" button.
   // Some users will want follow-ups from a different angle than the primary.
   const grid = document.getElementById('results-grid');
@@ -1394,16 +1543,174 @@ function displayResults(images) {
       <div class="result-item-footer">
         <span class="result-label">${label}</span>
         <div class="result-item-actions">
-          <button class="result-more" type="button" title="Generate ground-level photographs of this same building">📷 More photographs</button>
+          <button class="result-more" type="button" title="Generate 10 photographs (4 aerial + 6 ground) of this same building">📷 More photographs</button>
+          <button class="result-refine" type="button" title="Tweak settings and re-generate from the same captured base">↻ Refine</button>
           <a class="result-download" href="${img.url}" download="site-scout-${img.type}.jpg">Download</a>
         </div>
       </div>
     `;
     item.querySelector('.result-more').addEventListener('click', () => triggerFollowup(img.url, label));
+    item.querySelector('.result-refine').addEventListener('click', () => refineFromResult());
     grid.appendChild(item);
   });
 
   goToStep(5);
+}
+
+function refineFromResult() {
+  // Keep selectedCapture / pills / preset; just go back to Step 3 to tweak.
+  goToStep(3);
+  updatePromptPreview(window.PromptBuilder.getState());
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ── Share / permalink / Explore feed / Single post ────────────────────────
+
+async function saveGenerationPost(shared) {
+  if (!state.lastImages || state.lastImages.length === 0) return;
+  try {
+    const pillState = window.PromptBuilder.getState();
+    const res = await fetch('/api/share', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        city: state.currentCity,
+        building_type: pillState.building_type,
+        preset_label: state.activePreset ? state.activePreset.label : null,
+        pill_state: pillState,
+        original_url: state.originalCapture ? state.originalCapture.proxyUrl : null,
+        primary_url: state.lastImages[0].url,
+        all_urls: state.lastImages.map(i => ({ type: i.type, url: i.url })),
+        shared: !!shared,
+      }),
+    });
+    const data = await res.json();
+    if (data.id) {
+      state.lastPostId = data.id;
+      const link = `${location.origin}/p/${data.id}`;
+      const linkEl = document.getElementById('results-permalink-link');
+      const hint = document.getElementById('results-permalink-hint');
+      if (linkEl && hint) { linkEl.textContent = link; linkEl.href = link; hint.style.display = ''; }
+    }
+  } catch (e) {
+    console.warn('[share] save failed:', e.message);
+  }
+}
+
+async function onShareToggleChange() {
+  const checked = document.getElementById('results-share-toggle').checked;
+  if (!state.lastPostId) {
+    // Hadn't been saved yet — save with the chosen shared flag
+    return saveGenerationPost(checked);
+  }
+  try {
+    await fetch(`/api/share/${state.lastPostId}/toggle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shared: checked }),
+    });
+  } catch (e) {
+    console.warn('[share] toggle failed:', e.message);
+  }
+}
+
+function copyPermalink() {
+  if (!state.lastPostId) { alert('Permalink not ready yet — wait for generation to finish.'); return; }
+  const link = `${location.origin}/p/${state.lastPostId}`;
+  navigator.clipboard.writeText(link).then(
+    () => { const b = document.getElementById('results-permalink-btn'); const o = b.textContent; b.textContent = '✓ Copied'; setTimeout(() => b.textContent = o, 1400); },
+    () => prompt('Copy this link:', link)
+  );
+}
+
+// ── Explore feed (path = /explore) ───────────────────────────────────────
+
+async function renderExplore() {
+  document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+  document.getElementById('step-explore').classList.add('active');
+  document.getElementById('step-indicator').style.display = 'none';
+
+  const grid = document.getElementById('explore-grid');
+  const loading = document.getElementById('explore-loading');
+  const empty = document.getElementById('explore-empty');
+  loading.style.display = 'flex';
+  empty.style.display = 'none';
+  grid.innerHTML = '';
+
+  try {
+    const res = await fetch('/api/explore?limit=48');
+    const data = await res.json();
+    loading.style.display = 'none';
+    const posts = data.posts || [];
+    if (posts.length === 0) { empty.style.display = ''; return; }
+
+    posts.forEach(p => {
+      const card = document.createElement('a');
+      card.className = 'explore-card';
+      card.href = `/p/${p.id}`;
+      card.innerHTML = `
+        <div class="explore-card-imgs">
+          ${p.original_url ? `<img class="explore-img before" src="${p.original_url}" alt="Before">` : ''}
+          <img class="explore-img after" src="${p.primary_url}" alt="After">
+          ${p.original_url ? '<span class="explore-flip-hint">hover to flip</span>' : ''}
+        </div>
+        <div class="explore-card-meta">
+          <strong>${escHtml(p.building_type || 'Building')}</strong>
+          ${p.city ? ` · ${escHtml(p.city)}` : ''}
+          ${p.preset_label ? `<div class="explore-card-preset">${escHtml(p.preset_label)}</div>` : ''}
+        </div>
+      `;
+      grid.appendChild(card);
+    });
+  } catch (e) {
+    loading.style.display = 'none';
+    grid.innerHTML = `<p class="empty-msg">Couldn't load the feed: ${escHtml(e.message)}</p>`;
+  }
+}
+
+// ── Single post (path = /p/:id) ──────────────────────────────────────────
+
+async function renderSinglePost(id) {
+  document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+  document.getElementById('step-post').classList.add('active');
+  document.getElementById('step-indicator').style.display = 'none';
+
+  const loading = document.getElementById('post-loading');
+  const content = document.getElementById('post-content');
+  const error = document.getElementById('post-error');
+  loading.style.display = 'flex';
+
+  try {
+    const res = await fetch(`/api/post/${id}`);
+    if (!res.ok) throw new Error('Not found');
+    const post = await res.json();
+    loading.style.display = 'none';
+    content.style.display = '';
+
+    document.getElementById('post-title').textContent = post.building_type || 'Photograph';
+    document.getElementById('post-subtitle').textContent = [post.city, post.preset_label].filter(Boolean).join(' · ');
+
+    if (post.original_url) document.getElementById('post-original-img').src = post.original_url;
+    if (post.primary_url)  document.getElementById('post-primary-img').src  = post.primary_url;
+
+    const grid = document.getElementById('post-grid');
+    grid.innerHTML = '';
+    (post.all_urls || []).forEach(img => {
+      const item = document.createElement('div');
+      item.className = 'result-item';
+      item.innerHTML = `
+        <img src="${img.url}" alt="${img.type || ''}">
+        <div class="result-item-footer">
+          <span class="result-label">${escHtml((img.type || '').replace(/_/g, ' '))}</span>
+          <a class="result-download" href="${img.url}" download="site-scout-${img.type}.jpg">Download</a>
+        </div>
+      `;
+      grid.appendChild(item);
+    });
+  } catch (e) {
+    loading.style.display = 'none';
+    error.style.display = '';
+  }
 }
 
 // ── "More photographs" follow-up flow ───────────────────────────────────────

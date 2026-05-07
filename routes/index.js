@@ -7,6 +7,14 @@ router.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
+// SPA permalink + gallery — serve same HTML; client JS detects the path
+router.get('/explore', (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/index.html'));
+});
+router.get('/p/:id', (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/index.html'));
+});
+
 // Admin dashboard page
 router.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, '../public/admin.html'));

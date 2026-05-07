@@ -111,7 +111,7 @@ function buildPrompt(pillState, viewType = 'perspective_3d', opts = {}) {
   const free       = free_text && free_text.trim() ? `\n\nAdditional notes: ${free_text.trim()}` : '';
 
   const boundaryClause = hasBoundary
-    ? 'A red outline has been drawn on the source image marking the build site. Place the new building strictly inside that red outline. Pixels outside the red outline must remain pixel-perfect identical to the source — do not add, remove, modify, or restyle anything beyond the outline.'
+    ? 'INPAINTING TASK: A bright red outline has been drawn on the source image marking the build site. EDIT only the space INSIDE that red outline by inserting the new building there. The red line itself is a marker — REMOVE it completely from the output image; it must NOT appear in the final photograph. Pixels OUTSIDE the red outline must remain pixel-perfect identical to the source — do not add, remove, modify, or restyle anything beyond the outline. Treat this as a precise inpainting / region-replace operation.'
     : 'Place the new building only on the empty plot visible in the source image. Do not extend it onto neighbouring land.';
 
   const refClause = (refDescriptions && refDescriptions.length)

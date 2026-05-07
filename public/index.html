@@ -23,6 +23,7 @@
         <span class="brand-tag">AI Architectural Photographs</span>
       </div>
       <div class="header-right">
+        <a class="header-link" href="/explore">Explore</a>
         <div id="credit-display" class="credit-display" style="display:none">
           <span class="credit-badge" id="credit-count">3</span>
           <span class="credit-label">credits</span>
@@ -300,6 +301,11 @@
           <p class="step-sub" id="results-site-label"></p>
         </div>
         <div class="results-actions">
+          <label class="share-toggle" title="Share this in the public Explore feed">
+            <input type="checkbox" id="results-share-toggle" />
+            <span>&#127760; Share to Explore</span>
+          </label>
+          <button class="btn-secondary" id="results-permalink-btn" type="button" title="Copy permalink">&#128279; Copy link</button>
           <button class="btn-secondary" onclick="downloadAll()">&#8659; Download All</button>
           <button class="btn-secondary" onclick="resetApp()">New Search</button>
         </div>
@@ -320,6 +326,8 @@
       <div id="results-hero" class="results-hero" style="display:none"></div>
       <div id="results-grid" class="results-grid"></div>
 
+      <p class="results-permalink-hint" id="results-permalink-hint" style="display:none">Permalink: <a id="results-permalink-link" href="#" target="_blank"></a></p>
+
       <!-- "More photographs" follow-up section: appears when user clicks "More from this view" -->
       <div id="followup-section" class="followup-section" style="display:none">
         <div class="followup-header">
@@ -331,6 +339,49 @@
         </div>
         <div id="followup-grid" class="results-grid"></div>
       </div>
+    </section>
+
+    <!-- EXPLORE: public gallery feed (loads when path = /explore) -->
+    <section class="step" id="step-explore">
+      <div class="step-header">
+        <button class="btn-back" type="button" onclick="location.href='/'">&#8592; Back to app</button>
+        <div>
+          <h2>Explore</h2>
+          <p class="step-sub">Photographs that other users have shared. Click any one to see the full set.</p>
+        </div>
+      </div>
+      <div id="explore-loading" class="loading-msg"><div class="spinner"></div> Loading the feed&hellip;</div>
+      <div id="explore-grid" class="explore-grid"></div>
+      <div id="explore-empty" class="empty-msg" style="display:none">No shared photographs yet. Generate one and toggle "Share to Explore" to be the first.</div>
+    </section>
+
+    <!-- SINGLE POST: permalink view (loads when path = /p/:id) -->
+    <section class="step" id="step-post">
+      <div class="step-header">
+        <button class="btn-back" type="button" onclick="location.href='/'">&#8592; Back to app</button>
+        <div>
+          <h2 id="post-title">Photograph</h2>
+          <p class="step-sub" id="post-subtitle"></p>
+        </div>
+        <div class="results-actions">
+          <a class="btn-secondary" id="post-explore-btn" href="/explore">&#127760; Explore feed</a>
+        </div>
+      </div>
+      <div id="post-loading" class="loading-msg"><div class="spinner"></div> Loading photograph&hellip;</div>
+      <div id="post-content" style="display:none">
+        <div class="results-pair">
+          <div class="results-pair-card">
+            <img id="post-original-img" alt="Original site capture">
+            <p class="results-pair-label">Original site (the captured base)</p>
+          </div>
+          <div class="results-pair-card">
+            <img id="post-primary-img" alt="Primary photograph">
+            <p class="results-pair-label" id="post-primary-label">Primary photograph</p>
+          </div>
+        </div>
+        <div id="post-grid" class="results-grid"></div>
+      </div>
+      <div id="post-error" class="empty-msg" style="display:none">Photograph not found.</div>
     </section>
 
   </main>
