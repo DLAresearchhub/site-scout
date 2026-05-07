@@ -167,35 +167,54 @@ function buildPromptSegments(pillState) {
 // follow-up asks Gemini to re-photograph the SAME building from a different
 // human-scale viewpoint with active life around it.
 
+// 4 sky views (each from a cardinal compass quadrant) + 6 ground views.
+// Sky views vary the camera bearing while keeping an oblique drone look.
+// Ground views vary the camera position + the human/lifestyle context.
 const FOLLOWUP_VIEW_INSTRUCTIONS = {
-  street_eye_level: 'Re-photograph the SAME building shown in the source image from human eye-level on the pavement opposite — a 35 mm lens framing the full front elevation, with active street life in the foreground: a small group of people walking past, a parent pushing a buggy, a person on a bike. Buildings and materials must remain identical to the source.',
-  plaza_active:     'Re-photograph the SAME building shown in the source image from a public plaza or landscaped open space immediately in front of it — eye-level, slight upward tilt to read the parapet, families with young children playing, a couple walking a dog, people sitting on benches reading. If a green space exists in the source it should be richly populated.',
-  entrance_busy:    'Re-photograph the SAME building shown in the source image as a close-up of the main entrance and ground floor — close enough to read materials and signage. People are arriving and leaving: someone holding the door, a small group chatting, a delivery cyclist. Subtle motion blur on moving people; the architecture sharp.',
-  lifestyle_moment: 'Re-photograph the SAME building shown in the source image as a candid lifestyle moment — late-afternoon golden hour, a small outdoor cafe terrace with diners at tables, baristas serving, a dog under a chair, planters spilling over with greenery. The building anchors the background. The mood is calm, lived-in, real.',
+  // ── SKY (4) ────────────────────────────────────────────────────────────
+  sky_ne: 'Aerial drone photograph from the north-east, looking south-west toward the building at approximately 60° from horizontal, ~120 m altitude. Frame the full building footprint and roof, with the immediate neighbouring blocks visible. Clean photographic perspective; no fish-eye.',
+  sky_se: 'Aerial drone photograph from the south-east, looking north-west toward the building at approximately 60° from horizontal, ~120 m altitude. Show the full building footprint and roof, with immediate neighbours visible. Clean photographic perspective.',
+  sky_sw: 'Aerial drone photograph from the south-west, looking north-east toward the building at approximately 60° from horizontal, ~120 m altitude. Show the full building footprint and roof, with immediate neighbours visible. Clean photographic perspective.',
+  sky_nw: 'Aerial drone photograph from the north-west, looking south-east toward the building at approximately 60° from horizontal, ~120 m altitude. Show the full building footprint and roof, with immediate neighbours visible. Clean photographic perspective.',
+
+  // ── GROUND (6) ─────────────────────────────────────────────────────────
+  street_front: 'Eye-level photograph from the pavement directly opposite the building — 35 mm lens framing the full front elevation, slight upward tilt to capture the parapet. Active street life in the foreground: a small group walking past, a parent pushing a buggy, a person on a bike. Buildings and materials remain identical to the source.',
+  street_corner: 'Eye-level photograph from a street corner, showing two facades at an oblique angle. Human-scale viewpoint, pedestrians passing, a cyclist in motion. The building dominates the frame; surrounding context kept quiet.',
+  street_entrance: 'Close-up photograph of the main entrance and ground floor — close enough to read material textures and signage. People arriving and leaving: someone holding the door, a small group chatting, a delivery cyclist passing. Subtle motion blur on moving people; the architecture stays sharp.',
+  plaza_active: 'Photograph from a public plaza or landscaped open space immediately in front of the building — eye-level, slight upward tilt to read the parapet, families with young children playing, a couple walking a dog, people sitting on benches reading. If a green space exists, populate it richly. Mature tree planting in the foreground.',
+  cafe_terrace: 'Photograph of a small cafe / restaurant terrace at the foot of the building — al fresco tables with diners, baristas serving, planters spilling with greenery, soft fabric umbrellas, a dog asleep under a chair. Late afternoon. The building anchors the background.',
+  lifestyle_evening: 'Late-golden-hour lifestyle photograph — warm directional light, long shadows, busy street life: people heading home from work, cyclists, a couple with takeaway coffees, soft glow beginning from inside the building\'s ground-floor windows. The building dominates the composition.',
 };
 
 function buildFollowupPrompt(pillState, viewType, opts = {}) {
   const p = pillState || {};
-  const { presetAddendum = '' } = opts;
+  const { presetAddendum = '', buildingDescription = '' } = opts;
   const descriptor = BUILDING_DESCRIPTORS[p.building_type] || (p.building_type || 'building').toLowerCase();
-  const view = FOLLOWUP_VIEW_INSTRUCTIONS[viewType] || FOLLOWUP_VIEW_INSTRUCTIONS.street_eye_level;
+  const view = FOLLOWUP_VIEW_INSTRUCTIONS[viewType] || FOLLOWUP_VIEW_INSTRUCTIONS.street_front;
   const presetClause = presetAddendum && presetAddendum.trim() ? `\n\n${presetAddendum.trim()}` : '';
+  const visionClause = buildingDescription && buildingDescription.trim()
+    ? `\n\nThe building shown in the source image: ${buildingDescription.trim()} — every one of these features must be preserved exactly.`
+    : '';
 
-  return `Please re-photograph the building shown in this source image from a new human-scale viewpoint, as a real, high-resolution photograph captured by a professional architectural photographer.
+  return `Please reimagine this low quality photoshop collage as a real, high-resolution photograph of the same building from a new viewpoint, captured by a professional architectural photographer.
 
-${view}
+Camera & framing: ${view}
 
-PRESERVE EXACTLY: The building's form, materials, fenestration pattern, roofline, colour and proportions must be IDENTICAL to the source image. Do not redesign the building. The only change is the camera viewpoint and the people / life now visible around it. Surrounding context (neighbouring buildings, roads, sky) must remain plausible and quiet — never compete with the subject.
+PRESERVE EXACTLY (do NOT modify): The building's form, massing, materials, fenestration pattern, roofline, parapet, balconies, colour, and proportions must be IDENTICAL to the source image. Do not redesign the building. Only the camera viewpoint and the people / life around it change. Neighbouring buildings, roads, kerbs, pavements, trees, planters, and the horizon stay plausible and quiet — never compete with the subject.${visionClause}
 
-People & life: People are candid, unposed, naturally integrated into the scene — staff, occupants, passers-by, families, dog walkers, cyclists where appropriate. Close-range photographic realism: visible skin texture with pores, sharp facial detail without stylisation, individually resolved hair strands, accurate fabric textures with seams and folds, natural posture and movement. Subtle motion blur only on people moving naturally; stationary architecture and faces remain sharp.
+People and human realism: Introduce people naturally where the environment supports human presence — occupants, passers-by, staff, visitors, families, dog walkers, cyclists. Candid and unposed, contributing scale and life without appearing staged. Close-range photographic realism: clearly visible skin texture with pores and natural tonal variation, sharp facial detail without stylisation, individually resolved hair strands with realistic light interaction, accurate fabric textures with seams, folds, and material weight, natural posture and movement.
+
+Architecture and materials: All architecture remains unchanged in form and layout. Buildings appear newly constructed and well maintained. Clean, uniform surfaces. High-resolution material definition. Sharp edges and precise junctions. Accurate light response for glass, metal, stone, and concrete. No wear, weathering, dirt, stains, damage, or surface imperfections.
+
+Time, lighting, and exposure: Physically accurate natural daylight consistent with the time of day implied by this view. Sun position and angle, shadow length, direction, and softness physically consistent. Balanced ambient illumination with realistic bounce light. Realistic reflections in glazing and polished materials. Lighting is neutral and non-dramatic.
+
+Motion and shutter behaviour: Apply subtle motion blur only where people are moving naturally, consistent with shutter speed. Stationary architecture and faces remain sharp.
+
+Camera, lens, and capture settings: High-end full-frame camera body. 35 mm lens at f/4.5. Shutter speed appropriate to the available light and human motion. Clean low ISO. Realistic depth of field with focus on the subject building. Neutral white balance, accurate colour response. Clean exposure with restrained contrast. No cinematic effects, artistic grading, or stylised filters.
 
 Subject: ${descriptor} (re-photographed, not redesigned).${presetClause}
 
-Lighting & exposure: Physically accurate natural daylight consistent with the source image's time of day. Sun angle, shadow direction and softness consistent with that time. Balanced ambient illumination with realistic bounce light. Realistic reflections in glazing and polished materials. Lighting is neutral and non-dramatic.
-
-Camera: High-end full-frame body. 35 mm prime lens at f/4.5. Shutter speed appropriate to subtle human motion. Clean low ISO. Realistic depth of field with focus on the subject building. Neutral white balance, accurate colour. Clean exposure with restrained contrast. No cinematic grading, no artistic filters, no stylised effects.
-
-Treat the scene as a real place being photographed. The result must be indistinguishable from a real, professionally captured photograph.`;
+Treat the scene as a real place being photographed, not modified or enhanced. The result must be indistinguishable from a real, professionally captured photograph of a newly completed, inhabited environment.`;
 }
 
 module.exports = { buildPrompt, buildFollowupPrompt, buildPromptSegments, SEGMENT_COLORS };

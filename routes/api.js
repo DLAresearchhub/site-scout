@@ -423,29 +423,67 @@ async function processFollowupJob(jobId, params) {
       }
     }
 
-    // Resolve the chosen image to disk + base64. URL shape: /api/capture/file/<filename>
-    const m = /\/api\/capture\/file\/([^?#]+)$/.exec(image_url || '');
+    // Resolve the chosen image to disk + base64. Generated images are served
+    // either at /site-images/<file> (static) OR /api/capture/file/<file> (proxy).
+    const m = /(?:\/site-images\/|\/api\/capture\/file\/)([^?#]+)$/.exec(image_url || '');
     if (!m) throw new Error('Cannot resolve chosen image URL: ' + image_url);
     const filename = decodeURIComponent(m[1]);
     const filePath = path.join(__dirname, '../public/site-images', filename);
-    if (!fs.existsSync(filePath)) throw new Error('Chosen image file missing on disk');
+    if (!fs.existsSync(filePath)) throw new Error('Chosen image file missing on disk: ' + filename);
     const sourceBase64 = fs.readFileSync(filePath).toString('base64');
 
+    // Vision pre-pass: ask Gemini to describe the building so prompts reference
+    // its actual features rather than being generic. Cheap (text-vision call).
+    let buildingDescription = '';
+    try {
+      job.message = 'Reading the building...';
+      const desc = await refAnalyzer.describeReferences([{ data: sourceBase64, mimeType: 'image/jpeg' }]);
+      if (desc && desc[0]) buildingDescription = desc[0];
+    } catch (e) {
+      console.warn('[follow-up] vision pre-pass failed; continuing without:', e.message);
+    }
+
+    // 4 sky + 6 ground = 10 photographs.
     const followupViews = [
-      { type: 'street_eye_level', label: 'Generating street eye-level photograph...' },
-      { type: 'plaza_active',     label: 'Generating plaza / public-realm photograph...' },
-      { type: 'entrance_busy',    label: 'Generating entrance close-up photograph...' },
-      { type: 'lifestyle_moment', label: 'Generating lifestyle moment photograph...' },
+      { type: 'sky_ne',           group: 'sky',    label: 'Aerial — north-east' },
+      { type: 'sky_se',           group: 'sky',    label: 'Aerial — south-east' },
+      { type: 'sky_sw',           group: 'sky',    label: 'Aerial — south-west' },
+      { type: 'sky_nw',           group: 'sky',    label: 'Aerial — north-west' },
+      { type: 'street_front',     group: 'ground', label: 'Street — front elevation' },
+      { type: 'street_corner',    group: 'ground', label: 'Street — corner view' },
+      { type: 'street_entrance',  group: 'ground', label: 'Street — entrance' },
+      { type: 'plaza_active',     group: 'ground', label: 'Plaza / public realm' },
+      { type: 'cafe_terrace',     group: 'ground', label: 'Cafe terrace' },
+      { type: 'lifestyle_evening',group: 'ground', label: 'Lifestyle — golden hour' },
     ];
 
-    for (let i = 0; i < followupViews.length; i++) {
-      const v = followupViews[i];
-      job.message = v.label;
-      job.progress = Math.round((i / followupViews.length) * 100);
-      const prompt = promptBuilder.buildFollowupPrompt(pill_state, v.type, { presetAddendum: addendum });
+    // Run with concurrency cap so we don't blow rate limits and feedback is timely.
+    const CONCURRENCY = 3;
+    let completed = 0;
+    job.message = `Generating 10 photographs (4 aerial + 6 ground) of the building…`;
+
+    async function runOne(v) {
+      const prompt = promptBuilder.buildFollowupPrompt(pill_state, v.type, {
+        presetAddendum: addendum,
+        buildingDescription,
+      });
       const url = await imageGenerator.generateFromCapture(sourceBase64, 'image/jpeg', prompt, []);
-      job.images.push({ type: v.type, url });
+      job.images.push({ type: v.type, label: v.label, group: v.group, url });
+      completed++;
+      job.progress = Math.round((completed / followupViews.length) * 100);
+      job.message = `Photograph ${completed} of ${followupViews.length} done…`;
     }
+
+    // Worker pool
+    const queue = followupViews.slice();
+    async function worker() {
+      while (queue.length > 0) {
+        const v = queue.shift();
+        try { await runOne(v); }
+        catch (e) { console.warn('[follow-up] view failed', v.type, e.message); }
+      }
+    }
+    await Promise.all(new Array(CONCURRENCY).fill(0).map(() => worker()));
 
     job.status = 'completed';
     job.progress = 100;

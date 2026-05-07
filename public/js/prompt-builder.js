@@ -148,19 +148,44 @@
     });
   }
 
-  function buildPreviewSegments(pillState) {
+  // Each segment now carries a "kind" so the renderer can apply CSS classes
+  // for a unified, restrained palette (orange accent + grays + red for the
+  // boundary marker). Optional second arg passes app-level state (boundary,
+  // refs, presets) so they can show as dedicated chips.
+  function buildPreviewSegments(pillState, ctx) {
     const { building_type, stories, arch_style, facade, roof, landscaping, time_of_day, weather, surroundings, free_text, skip = {} } = pillState;
+    ctx = ctx || {};
     const segs = [];
-    if (building_type) segs.push({ text: building_type, color: SEGMENT_COLORS.building_type });
-    if (stories)       segs.push({ text: stories, color: SEGMENT_COLORS.stories });
-    if (!skip.arch_style && arch_style) segs.push({ text: arch_style, color: SEGMENT_COLORS.arch_style });
-    if (!skip.facade && facade)         segs.push({ text: facade, color: SEGMENT_COLORS.facade });
-    if (!skip.roof && roof)             segs.push({ text: roof, color: SEGMENT_COLORS.roof });
-    if (!skip.landscaping && landscaping) segs.push({ text: landscaping, color: SEGMENT_COLORS.landscaping });
-    if (time_of_day)                    segs.push({ text: time_of_day, color: SEGMENT_COLORS.time_of_day });
-    if (!skip.weather && weather)       segs.push({ text: weather, color: SEGMENT_COLORS.weather });
-    if (!skip.surroundings && surroundings) segs.push({ text: surroundings, color: SEGMENT_COLORS.surroundings });
-    if (free_text && free_text.trim()) segs.push({ text: free_text.trim(), color: SEGMENT_COLORS.free_text });
+
+    // 1. Boundary marker (highest priority — alters how Gemini reads the source)
+    if (ctx.hasBoundary) segs.push({ text: '\u{1F7E5} Boundary drawn', kind: 'boundary' });
+
+    // 2. References uploaded
+    if (ctx.refCount > 0) segs.push({ text: `\u{1F4F7} ${ctx.refCount} reference${ctx.refCount === 1 ? '' : 's'}`, kind: 'refs' });
+
+    // 3. Active preset (if any) — design intent name
+    if (ctx.presetLabel) segs.push({ text: `\u{2728} ${ctx.presetLabel}`, kind: 'preset' });
+
+    // 4. Lead chip — building type
+    if (building_type) segs.push({ text: building_type, kind: 'lead' });
+
+    // 5. Massing — stories
+    if (stories) segs.push({ text: `${stories} storeys`, kind: 'mass' });
+
+    // 6. Design selections — material, form
+    if (!skip.arch_style && arch_style) segs.push({ text: arch_style, kind: 'design' });
+    if (!skip.facade && facade)         segs.push({ text: facade,     kind: 'design' });
+    if (!skip.roof && roof)             segs.push({ text: roof,       kind: 'design' });
+    if (!skip.landscaping && landscaping) segs.push({ text: landscaping, kind: 'design' });
+
+    // 7. Atmosphere — time, weather, surroundings
+    if (time_of_day)                        segs.push({ text: time_of_day,  kind: 'atmos' });
+    if (!skip.weather && weather)           segs.push({ text: weather,      kind: 'atmos' });
+    if (!skip.surroundings && surroundings) segs.push({ text: surroundings, kind: 'atmos' });
+
+    // 8. Free-text note — separate styling
+    if (free_text && free_text.trim()) segs.push({ text: free_text.trim(), kind: 'note' });
+
     return segs;
   }
 

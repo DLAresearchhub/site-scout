@@ -841,6 +841,8 @@ async function saveBoundary() {
 
     exitBoundaryEditor();
     goToStep(3);
+    // Refresh the live prompt preview so the boundary chip appears right away
+    updatePromptPreview(window.PromptBuilder.getState());
   } catch (err) {
     console.error('[saveBoundary]', err);
     alert('Could not save boundary: ' + err.message);
@@ -1041,14 +1043,19 @@ function onPillStateChange(pillState) {
 }
 
 function updatePromptPreview(pillState) {
-  const segs = window.PromptBuilder.buildPreviewSegments(pillState);
+  const ctx = {
+    hasBoundary: !!state.hasBoundary,
+    refCount: (state.referenceImages && state.referenceImages.length) || 0,
+    presetLabel: state.activePreset ? state.activePreset.label : null,
+  };
+  const segs = window.PromptBuilder.buildPreviewSegments(pillState, ctx);
   const container = document.getElementById('prompt-preview-segments');
 
   if (segs.length === 0) {
-    container.innerHTML = '<span class="preview-placeholder">Select a building type and options to see your prompt build here...</span>';
+    container.innerHTML = '<span class="preview-placeholder">Select a building type and options to see your prompt build here…</span>';
   } else {
     container.innerHTML = segs.map(s =>
-      `<span class="prompt-segment" style="background:${s.color}">${escHtml(s.text)}</span>`
+      `<span class="prompt-segment seg-${s.kind || 'design'}">${escHtml(s.text)}</span>`
     ).join('');
   }
 
@@ -1200,6 +1207,7 @@ function processRefFiles(files) {
         const mimeType = file.type || 'image/jpeg';
         state.referenceImages.push({ dataUrl: resizedDataUrl, data: base64, mimeType });
         renderRefThumbs();
+        updatePromptPreview(window.PromptBuilder.getState());
       });
     };
     reader.readAsDataURL(file);
@@ -1236,6 +1244,7 @@ function renderRefThumbs() {
 function removeRefImage(index) {
   state.referenceImages.splice(index, 1);
   renderRefThumbs();
+  updatePromptPreview(window.PromptBuilder.getState());
 }
 
 // ── Step 4 & 5: Generate & Results ───────────────────────────────────────
@@ -1404,6 +1413,8 @@ async function triggerFollowup(imageUrl, sourceLabel) {
   if (!pillState.building_type) return alert('Missing building type — go back to Step 3.');
   if (state.followupJobId) return alert('A follow-up generation is already in progress.');
 
+  if (!confirm('This will generate 10 photographs (4 aerial + 6 ground-level) of this building — uses 10 image-generation credits. Continue?')) return;
+
   state.chosenResultUrl = imageUrl;
   const section = document.getElementById('followup-section');
   const status  = document.getElementById('followup-status');
@@ -1411,7 +1422,7 @@ async function triggerFollowup(imageUrl, sourceLabel) {
   const prog    = document.getElementById('followup-progress');
   const bar     = document.getElementById('followup-progress-bar');
   section.style.display = 'block';
-  status.textContent = `Generating 4 ground-level & lifestyle photographs from "${sourceLabel}"…`;
+  status.textContent = `Reading the building & generating 10 photographs from "${sourceLabel}"… this takes ~60–90s.`;
   grid.innerHTML = '';
   prog.style.display = '';
   bar.style.width = '0%';
@@ -1486,27 +1497,35 @@ function pollFollowupProgress() {
 function renderFollowupResults(images) {
   const grid = document.getElementById('followup-grid');
   const status = document.getElementById('followup-status');
-  status.textContent = `${images.length} ground-level photograph${images.length === 1 ? '' : 's'} of the same building.`;
+  const sky = images.filter(i => i.group === 'sky');
+  const ground = images.filter(i => i.group === 'ground' || !i.group);
+  status.textContent = `${images.length} photographs of the same building — ${sky.length} aerial, ${ground.length} ground-level.`;
   grid.innerHTML = '';
-  const FOLLOWUP_LABELS = {
-    street_eye_level: 'Street eye-level',
-    plaza_active:     'Plaza / public realm',
-    entrance_busy:    'Entrance close-up',
-    lifestyle_moment: 'Lifestyle moment',
+
+  const renderGroup = (heading, list) => {
+    if (list.length === 0) return;
+    const head = document.createElement('h4');
+    head.className = 'followup-group-heading';
+    head.textContent = heading;
+    grid.appendChild(head);
+    list.forEach(img => {
+      const label = img.label || img.type;
+      const item = document.createElement('div');
+      item.className = 'result-item';
+      item.innerHTML = `
+        <img src="${img.url}" alt="${label}">
+        <div class="result-item-footer">
+          <span class="result-label">${label}</span>
+          <div class="result-item-actions">
+            <a class="result-download" href="${img.url}" download="site-scout-${img.type}.jpg">Download</a>
+          </div>
+        </div>
+      `;
+      grid.appendChild(item);
+    });
   };
-  images.forEach(img => {
-    const label = FOLLOWUP_LABELS[img.type] || img.type;
-    const item = document.createElement('div');
-    item.className = 'result-item';
-    item.innerHTML = `
-      <img src="${img.url}" alt="${label}">
-      <div class="result-item-footer">
-        <span class="result-label">${label}</span>
-        <a class="result-download" href="${img.url}" download="site-scout-${img.type}.jpg">Download</a>
-      </div>
-    `;
-    grid.appendChild(item);
-  });
+  renderGroup('Aerial views', sky);
+  renderGroup('Ground-level views', ground);
 }
 
 function downloadAll() {
