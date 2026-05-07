@@ -8,6 +8,7 @@ const captureService = require('../services/capture-service');
 const promptBuilder = require('../services/prompt-builder');
 const imageGenerator = require('../services/image-generator');
 const usageLogger = require('../services/usage-logger');
+const overlays = require('../services/overlays');
 
 const jobs = new Map();
 const FREE_LIMIT = parseInt(process.env.FREE_GENERATIONS_IP || '3', 10);
@@ -26,6 +27,75 @@ async function checkCredits(req, res, next) {
   }
   next();
 }
+
+// ── Public client config ────────────────────────────────────────────────────
+
+router.get('/config', (req, res) => {
+  res.json({
+    mapboxToken: process.env.MAPBOX_TOKEN || null,
+    googleMapTilesKey: process.env.GOOGLE_MAPS_TILES_KEY || null,
+  });
+});
+
+// ── Site overlays (Phase 1: Flood + Amenities; Listed/Solar stubs) ──────────
+
+router.get('/overlay/flood', async (req, res) => {
+  const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
+  if (!isFinite(lat) || !isFinite(lng)) return res.status(400).json({ error: 'lat & lng required' });
+  try { res.json(await overlays.getFloodRisk(lat, lng)); }
+  catch (e) {
+    console.error('[overlay/flood]', e.message);
+    res.status(502).json({ error: 'Flood data unavailable', message: e.message });
+  }
+});
+
+router.get('/overlay/amenities', async (req, res) => {
+  const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
+  if (!isFinite(lat) || !isFinite(lng)) return res.status(400).json({ error: 'lat & lng required' });
+  try { res.json(await overlays.getAmenities(lat, lng)); }
+  catch (e) {
+    console.error('[overlay/amenities]', e.message);
+    res.status(502).json({ error: 'Amenities unavailable', message: e.message });
+  }
+});
+
+router.get('/overlay/listed', (req, res) => {
+  res.json({ source: 'Historic England', notReady: true, message: 'Listed buildings overlay arrives in Phase 4 — needs the Historic England API wiring.' });
+});
+
+router.get('/overlay/solar', (req, res) => {
+  res.json({ source: 'Google Solar API', notReady: true, message: 'Solar potential overlay arrives in Phase 4 — needs the Solar API enabled on your Google Cloud project.' });
+});
+
+// ── Capture from client-rendered canvas ─────────────────────────────────────
+
+router.post('/capture-canvas', express.json({ limit: '12mb' }), (req, res) => {
+  try {
+    const { site_id, dataUrl, bearing, pitch, zoom } = req.body;
+    if (!site_id || !dataUrl) return res.status(400).json({ error: 'site_id and dataUrl required' });
+
+    const m = /^data:image\/(jpeg|jpg|png);base64,(.+)$/.exec(dataUrl);
+    if (!m) return res.status(400).json({ error: 'dataUrl must be base64 image/jpeg or image/png' });
+
+    const ext = m[1] === 'png' ? 'png' : 'jpg';
+    const buffer = Buffer.from(m[2], 'base64');
+    const safeId = String(site_id).replace(/[^a-z0-9-]/gi, '_').slice(0, 60);
+    const filename = `cap-${safeId}-canvas-${Date.now()}.${ext}`;
+    const dir = path.join(__dirname, '../public/site-images');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const filePath = path.join(dir, filename);
+    fs.writeFileSync(filePath, buffer);
+
+    const proxyUrl = `/api/capture/file/${filename}`;
+    const direction = (bearing != null) ? `b${Math.round(bearing)}p${Math.round(pitch || 0)}z${Math.round((zoom || 0) * 10) / 10}` : null;
+    const id = usageLogger.cacheCapture(String(site_id), 'mapbox3d', direction, filePath, proxyUrl, null);
+
+    res.json({ id, type: 'mapbox3d', direction, proxyUrl, label: '3D View — your angle' });
+  } catch (error) {
+    console.error('Error saving canvas capture:', error);
+    res.status(500).json({ error: 'Failed to save capture' });
+  }
+});
 
 // ── Search sites ─────────────────────────────────────────────────────────────
 

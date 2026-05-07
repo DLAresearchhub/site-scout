@@ -9,6 +9,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="https://cesium.com/downloads/cesiumjs/releases/1.124/Build/Cesium/Widgets/widgets.css">
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.124/Build/Cesium/Cesium.js"></script>
 </head>
 <body>
 
@@ -99,21 +101,46 @@
         </div>
       </div>
 
-      <div id="capture-loading" class="loading-msg">
-        <div class="spinner"></div>
-        Fetching site views &mdash; satellite, bird's eye &amp; street level...
+      <p class="capture-instructions">Drag to orbit, scroll to zoom. The view stays locked on your site &mdash; pick the angle you want as the base for your CGI.</p>
+
+      <div class="viewer-shell">
+        <div id="site-viewer" class="site-viewer"></div>
+        <div class="viewer-overlay">
+          <div class="viewer-readout">
+            <span class="readout-pill" id="readout-bearing">0&deg;</span>
+            <span class="readout-pill" id="readout-pitch">30&deg; tilt</span>
+          </div>
+          <div class="viewer-controls">
+            <button class="viewer-btn" id="viewer-reset-btn" type="button" title="Reset view">&#8634; Reset</button>
+            <button class="viewer-btn" id="viewer-top-btn" type="button" title="Top-down view">Top-down</button>
+          </div>
+        </div>
+        <div id="viewer-loading" class="viewer-loading"><div class="spinner"></div> Loading 3D view&hellip;</div>
+        <div id="viewer-error" class="viewer-error" style="display:none"></div>
       </div>
 
-      <p class="capture-instructions" id="capture-instructions" style="display:none">Select a view to use as the base for your CGI generation</p>
-      <div id="capture-grid" class="capture-grid" style="display:none"></div>
-
-      <div id="capture-none" class="empty-msg" style="display:none">
-        Only satellite view available for this site. Street View and Bird's Eye require API keys.
+      <!-- Overlay data toggles + panels (Phase 1) -->
+      <div class="overlay-section" id="overlay-section" style="display:none">
+        <div class="overlay-toggles" id="overlay-toggles">
+          <button class="toggle-chip" data-overlay="flood"     type="button" aria-pressed="true">
+            <span class="toggle-icon">&#9888;&#65039;</span><span class="toggle-label">Flood Risk</span><span class="toggle-state">ON</span>
+          </button>
+          <button class="toggle-chip" data-overlay="amenities" type="button" aria-pressed="true">
+            <span class="toggle-icon">&#127939;</span><span class="toggle-label">Walkable amenities</span><span class="toggle-state">ON</span>
+          </button>
+          <button class="toggle-chip" data-overlay="listed"    type="button" aria-pressed="false">
+            <span class="toggle-icon">&#127963;&#65039;</span><span class="toggle-label">Listed buildings</span><span class="toggle-state">off</span>
+          </button>
+          <button class="toggle-chip" data-overlay="solar"     type="button" aria-pressed="false">
+            <span class="toggle-icon">&#9728;&#65039;</span><span class="toggle-label">Solar potential</span><span class="toggle-state">off</span>
+          </button>
+        </div>
+        <div class="overlay-panels" id="overlay-panels"></div>
       </div>
 
-      <div class="step-actions" id="step2-actions" style="display:none">
-        <p class="selected-capture-hint">Selected: <strong id="selected-capture-label">None</strong></p>
-        <button class="btn-primary" id="configure-btn" onclick="goToStep(3)" disabled>Configure Building &#8594;</button>
+      <div class="step-actions" id="step2-actions">
+        <p class="selected-capture-hint">Lock in this angle to use as the base for your CGI generation.</p>
+        <button class="btn-primary" id="configure-btn" type="button" disabled>Use this view &#8594;</button>
       </div>
     </section>
 

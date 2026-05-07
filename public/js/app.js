@@ -12,6 +12,8 @@ const state = {
   referenceImages: [],     // [{ dataUrl, data (base64), mimeType }]
   generationCount: 0,
   overviewMap: null,
+  overlayPrefs: {},        // { flood: true, amenities: true, listed: false, solar: false }
+  overlayCache: {},        // siteKey → { overlayName: data }
 };
 
 // ── Init ──────────────────────────────────────────────────────────────────
@@ -20,6 +22,23 @@ document.addEventListener('DOMContentLoaded', () => {
   // Init pill UI
   const pillContainer = document.getElementById('pill-rows-container');
   window.PromptBuilder.initPillUI(pillContainer, onPillStateChange);
+
+  // Pull public client config (Map Tiles key, etc.)
+  fetch('/api/config').then(r => r.json()).then(cfg => {
+    state.googleMapTilesKey = cfg.googleMapTilesKey;
+  }).catch(() => {});
+
+  // Load overlay prefs from localStorage; default on for free overlays
+  loadOverlayPrefs();
+  initOverlayToggles();
+
+  // Wire viewer overlay buttons
+  const resetBtn = document.getElementById('viewer-reset-btn');
+  const topBtn   = document.getElementById('viewer-top-btn');
+  const useBtn   = document.getElementById('configure-btn');
+  if (resetBtn) resetBtn.addEventListener('click', () => resetSiteViewer());
+  if (topBtn)   topBtn.addEventListener('click', () => topDownSiteViewer());
+  if (useBtn)   useBtn.addEventListener('click', () => useThisView());
 
   // Load user/credits
   fetch('/api/me').then(r => r.json()).then(data => {
@@ -192,85 +211,285 @@ function renderSiteGrid(sites) {
   });
 }
 
-// ── Step 2: Captures ──────────────────────────────────────────────────────
+// ── Step 2: Cesium + Google Photorealistic 3D Tiles, locked-orbit ──────────
 
-async function selectSite(site) {
+const VIEWER_DEFAULTS = { headingDeg: 0, pitchDeg: -30, rangeMeters: 600 };
+
+function selectSite(site) {
   state.selectedSite = site;
   state.selectedCapture = null;
-
   document.getElementById('step2-site-name').textContent = `${site.name}${site.address ? ' — ' + site.address : ''}`;
-  document.getElementById('capture-loading').style.display = 'flex';
-  document.getElementById('capture-grid').style.display = 'none';
-  document.getElementById('capture-none').style.display = 'none';
-  document.getElementById('step2-actions').style.display = 'none';
-  document.getElementById('capture-instructions').style.display = 'none';
+  document.getElementById('configure-btn').disabled = true;
   goToStep(2);
+  loadEnabledOverlays(site);
+  initSiteViewer(parseFloat(site.lat), parseFloat(site.lng));
+}
+
+async function initSiteViewer(lat, lng) {
+  const errEl  = document.getElementById('viewer-error');
+  const loadEl = document.getElementById('viewer-loading');
+  const overlaySection = document.getElementById('overlay-section');
+  if (overlaySection) overlaySection.style.display = '';
+  errEl.style.display = 'none';
+  loadEl.style.display = 'flex';
+
+  if (!window.Cesium || !state.googleMapTilesKey) {
+    loadEl.style.display = 'none';
+    errEl.style.display = 'block';
+    errEl.textContent = !state.googleMapTilesKey
+      ? '3D viewer needs GOOGLE_MAPS_TILES_KEY set on the server.'
+      : 'CesiumJS failed to load (CDN blocked?).';
+    return;
+  }
+
+  // Tear down previous viewer if user picks another site
+  if (state.siteViewer) { try { state.siteViewer.destroy(); } catch (_) {} state.siteViewer = null; }
 
   try {
-    const res = await fetch('/api/capture-site', {
+    const viewer = new Cesium.Viewer('site-viewer', {
+      baseLayerPicker: false, geocoder: false, homeButton: false, sceneModePicker: false,
+      navigationHelpButton: false, animation: false, timeline: false, fullscreenButton: false,
+      infoBox: false, selectionIndicator: false,
+      // toDataURL needs preserveDrawingBuffer
+      contextOptions: { webgl: { preserveDrawingBuffer: true } },
+      // We use Google 3D Tiles, not Cesium's default imagery globe
+      imageryProvider: false,
+    });
+
+    // Hide the default flat globe — Google 3D Tiles include terrain + buildings
+    viewer.scene.globe.show = false;
+    viewer.scene.skyAtmosphere.show = false;
+    viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#0b0b0d');
+
+    state.siteViewer = viewer;
+
+    // Load Google Photorealistic 3D Tiles (Map Tiles API)
+    const tileset = await Cesium.createGooglePhotorealistic3DTileset({ key: state.googleMapTilesKey });
+    viewer.scene.primitives.add(tileset);
+    state.siteTileset = tileset;
+
+    // Lock the camera to orbit a fixed target (the site lat/lng)
+    const center = Cesium.Cartesian3.fromDegrees(lng, lat, 0);
+    state.siteViewerCenter = center;
+
+    viewer.camera.lookAt(center, new Cesium.HeadingPitchRange(
+      Cesium.Math.toRadians(VIEWER_DEFAULTS.headingDeg),
+      Cesium.Math.toRadians(VIEWER_DEFAULTS.pitchDeg),
+      VIEWER_DEFAULTS.rangeMeters
+    ));
+
+    // Camera control: orbit + zoom + tilt; NO pan/translate, NO free-look
+    const ctl = viewer.scene.screenSpaceCameraController;
+    ctl.enableTranslate = false;
+    ctl.enableLook      = false;
+    ctl.enableRotate    = true;
+    ctl.enableTilt      = true;
+    ctl.enableZoom      = true;
+    // Only allow zoom toward the lookAt target, not toward arbitrary cursor points
+    ctl.zoomEventTypes  = [Cesium.CameraEventType.WHEEL, Cesium.CameraEventType.PINCH];
+
+    // Update readout on every render tick
+    viewer.scene.postRender.addEventListener(updateViewerReadout);
+
+    loadEl.style.display = 'none';
+    document.getElementById('configure-btn').disabled = false;
+  } catch (err) {
+    console.error('[viewer]', err);
+    loadEl.style.display = 'none';
+    errEl.style.display = 'block';
+    errEl.textContent = '3D viewer error: ' + (err && err.message || 'unknown');
+  }
+}
+
+function updateViewerReadout() {
+  const viewer = state.siteViewer;
+  if (!viewer) return;
+  const headingDeg = ((Cesium.Math.toDegrees(viewer.camera.heading) % 360) + 360) % 360;
+  const pitchDeg   = Cesium.Math.toDegrees(viewer.camera.pitch);
+  document.getElementById('readout-bearing').textContent = `${Math.round(headingDeg)}°`;
+  document.getElementById('readout-pitch').textContent   = `${Math.round(Math.abs(pitchDeg))}° tilt`;
+}
+
+function resetSiteViewer() {
+  const viewer = state.siteViewer;
+  if (!viewer || !state.siteViewerCenter) return;
+  viewer.camera.lookAt(state.siteViewerCenter, new Cesium.HeadingPitchRange(
+    Cesium.Math.toRadians(VIEWER_DEFAULTS.headingDeg),
+    Cesium.Math.toRadians(VIEWER_DEFAULTS.pitchDeg),
+    VIEWER_DEFAULTS.rangeMeters
+  ));
+}
+
+function topDownSiteViewer() {
+  const viewer = state.siteViewer;
+  if (!viewer || !state.siteViewerCenter) return;
+  viewer.camera.lookAt(state.siteViewerCenter, new Cesium.HeadingPitchRange(
+    0, Cesium.Math.toRadians(-89.9), VIEWER_DEFAULTS.rangeMeters
+  ));
+}
+
+async function useThisView() {
+  const viewer = state.siteViewer;
+  const site = state.selectedSite;
+  if (!viewer || !site) return;
+
+  const btn = document.getElementById('configure-btn');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Capturing view…';
+
+  try {
+    // Force one render so the canvas is current, then read pixels
+    viewer.render();
+    const dataUrl = viewer.scene.canvas.toDataURL('image/jpeg', 0.92);
+
+    const res = await fetch('/api/capture-canvas', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ site_id: site.id || site.name, lat: site.lat, lng: site.lng }),
+      body: JSON.stringify({
+        site_id: site.id || site.name,
+        dataUrl,
+        bearing: Cesium.Math.toDegrees(viewer.camera.heading),
+        pitch:   Cesium.Math.toDegrees(viewer.camera.pitch),
+        zoom:    0,
+      }),
     });
-    const data = await res.json();
-    document.getElementById('capture-loading').style.display = 'none';
-
-    if (!data.captures || data.captures.length === 0) {
-      document.getElementById('capture-none').style.display = 'block';
-    } else {
-      renderCaptureGrid(data.captures);
-    }
-  } catch {
-    document.getElementById('capture-loading').style.display = 'none';
-    document.getElementById('capture-none').style.display = 'block';
+    if (!res.ok) throw new Error('capture-canvas ' + res.status);
+    const capture = await res.json();
+    state.selectedCapture = capture;
+    goToStep(3);
+  } catch (err) {
+    console.error('[useThisView]', err);
+    alert('Could not capture this view: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
   }
 }
 
-function renderCaptureGrid(captures) {
-  const grid = document.getElementById('capture-grid');
-  grid.innerHTML = '';
+// ── Site overlays (toggles + fetch + render + localStorage prefs) ──────────
 
-  captures.forEach(capture => {
-    const card = document.createElement('div');
-    card.className = 'capture-card';
-    card.dataset.captureId = capture.id;
+const OVERLAY_DEFS = {
+  flood:     { label: 'Flood Risk',         icon: '⚠️',  defaultOn: true  },
+  amenities: { label: 'Walkable amenities', icon: '🚶',  defaultOn: true  },
+  listed:    { label: 'Listed buildings',   icon: '🏛️',  defaultOn: false },
+  solar:     { label: 'Solar potential',    icon: '☀️',  defaultOn: false },
+};
 
-    const typeClass = { satellite: 'satellite', mapbox3d: 'mapbox3d', birdseye: 'birdseye', streetview: 'streetview' }[capture.type] || 'satellite';
-    const typeText  = { satellite: 'Satellite', mapbox3d: '3D View', birdseye: "Bird's Eye", streetview: 'Street' }[capture.type] || capture.type;
+function loadOverlayPrefs() {
+  let stored = {};
+  try { stored = JSON.parse(localStorage.getItem('siteScout.overlayPrefs') || '{}'); } catch (_) {}
+  const prefs = {};
+  for (const k of Object.keys(OVERLAY_DEFS)) {
+    prefs[k] = (k in stored) ? !!stored[k] : OVERLAY_DEFS[k].defaultOn;
+  }
+  state.overlayPrefs = prefs;
+}
 
-    const errorSvg = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='140'%3E%3Crect fill='%23f1f1f1' width='200' height='140'/%3E%3Ctext x='100' y='75' text-anchor='middle' fill='%236b7280' font-size='12'%3ENo image%3C/text%3E%3C/svg%3E`;
+function saveOverlayPrefs() {
+  try { localStorage.setItem('siteScout.overlayPrefs', JSON.stringify(state.overlayPrefs)); } catch (_) {}
+}
 
-    card.innerHTML = `
-      <img src="${capture.proxyUrl}" alt="${capture.label}" loading="lazy" onerror="this.src='${errorSvg}'">
-      <div class="capture-card-label">
-        <span>${capture.label || typeText}</span>
-        <span class="capture-type-badge ${typeClass}">${typeText}</span>
-      </div>
-    `;
-
-    card.addEventListener('click', () => selectCapture(capture, card));
-    grid.appendChild(card);
+function initOverlayToggles() {
+  const chips = document.querySelectorAll('#overlay-toggles .toggle-chip');
+  chips.forEach(chip => {
+    const name = chip.dataset.overlay;
+    syncToggleChip(chip, !!state.overlayPrefs[name]);
+    chip.addEventListener('click', () => {
+      state.overlayPrefs[name] = !state.overlayPrefs[name];
+      saveOverlayPrefs();
+      syncToggleChip(chip, state.overlayPrefs[name]);
+      // If a site is currently picked, fetch (or remove) just this overlay
+      if (state.selectedSite) {
+        if (state.overlayPrefs[name]) loadSingleOverlay(state.selectedSite, name);
+        else removeOverlayPanel(name);
+      }
+    });
   });
+}
 
-  grid.style.display = 'grid';
-  document.getElementById('step2-actions').style.display = 'flex';
+function syncToggleChip(chip, on) {
+  chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+  chip.classList.toggle('on', on);
+  const stateLbl = chip.querySelector('.toggle-state');
+  if (stateLbl) stateLbl.textContent = on ? 'ON' : 'off';
+}
 
-  // Auto-select if only one capture, or auto-select the first 3D view if available
-  const best = captures.find(c => c.type === 'mapbox3d') || captures[0];
-  if (best) {
-    const bestCard = grid.querySelector(`[data-capture-id="${best.id}"]`);
-    if (bestCard) selectCapture(best, bestCard);
-    // Only show "select a view" hint if there's more than one
-    document.getElementById('capture-instructions').style.display = captures.length > 1 ? 'block' : 'none';
+function loadEnabledOverlays(site) {
+  const panels = document.getElementById('overlay-panels');
+  if (panels) panels.innerHTML = '';
+  for (const name of Object.keys(OVERLAY_DEFS)) {
+    if (state.overlayPrefs[name]) loadSingleOverlay(site, name);
   }
 }
 
-function selectCapture(capture, cardEl) {
-  document.querySelectorAll('.capture-card').forEach(c => c.classList.remove('selected'));
-  cardEl.classList.add('selected');
-  state.selectedCapture = capture;
-  document.getElementById('selected-capture-label').textContent = capture.label || capture.type;
-  document.getElementById('configure-btn').disabled = false;
+async function loadSingleOverlay(site, name) {
+  const panels = document.getElementById('overlay-panels');
+  if (!panels) return;
+  const slot = ensureOverlayPanel(name);
+  slot.innerHTML = `<div class="overlay-row loading"><div class="spinner small"></div> Loading ${OVERLAY_DEFS[name].label.toLowerCase()}…</div>`;
+
+  try {
+    const res = await fetch(`/api/overlay/${name}?lat=${encodeURIComponent(site.lat)}&lng=${encodeURIComponent(site.lng)}`);
+    const data = await res.json();
+    if (!res.ok || data.notReady) {
+      slot.innerHTML = `<div class="overlay-row info"><span class="overlay-icon">${OVERLAY_DEFS[name].icon}</span><span><strong>${OVERLAY_DEFS[name].label}:</strong> ${data.message || data.error || 'unavailable'}</span></div>`;
+      return;
+    }
+    slot.innerHTML = renderOverlayBody(name, data);
+  } catch (err) {
+    slot.innerHTML = `<div class="overlay-row error"><span class="overlay-icon">${OVERLAY_DEFS[name].icon}</span><span><strong>${OVERLAY_DEFS[name].label}:</strong> ${err.message}</span></div>`;
+  }
+}
+
+function ensureOverlayPanel(name) {
+  const panels = document.getElementById('overlay-panels');
+  let slot = panels.querySelector(`[data-overlay-panel="${name}"]`);
+  if (!slot) {
+    slot = document.createElement('div');
+    slot.className = 'overlay-panel';
+    slot.dataset.overlayPanel = name;
+    panels.appendChild(slot);
+  }
+  return slot;
+}
+
+function removeOverlayPanel(name) {
+  const panels = document.getElementById('overlay-panels');
+  const slot = panels && panels.querySelector(`[data-overlay-panel="${name}"]`);
+  if (slot) slot.remove();
+}
+
+function renderOverlayBody(name, data) {
+  const def = OVERLAY_DEFS[name];
+  if (name === 'flood') {
+    const sev = data.severity === 'high' ? 'high' : (data.severity === 'low' ? 'low' : 'none');
+    return `<div class="overlay-row sev-${sev}">
+      <span class="overlay-icon">${def.icon}</span>
+      <div>
+        <div><strong>${def.label}:</strong> ${data.summary}</div>
+        ${data.areas && data.areas.length ? `<div class="overlay-sub">${data.areas.map(a => a.label).join(' · ')}</div>` : ''}
+      </div>
+    </div>`;
+  }
+  if (name === 'amenities') {
+    const c = data.counts || {};
+    const chips = [
+      `🏫 ${c.schools || 0} school${c.schools === 1 ? '' : 's'}`,
+      `🚆 ${c.stations || 0} station${c.stations === 1 ? '' : 's'}`,
+      `🏥 ${c.hospitals || 0} hospital${c.hospitals === 1 ? '' : 's'}`,
+      `🛒 ${c.supermarkets || 0} supermarket${c.supermarkets === 1 ? '' : 's'}`,
+      `🌳 ${c.parks || 0} park${c.parks === 1 ? '' : 's'}`,
+    ];
+    return `<div class="overlay-row">
+      <span class="overlay-icon">${def.icon}</span>
+      <div>
+        <div><strong>${def.label}:</strong> within ${data.radiusMeters} m</div>
+        <div class="overlay-sub">${chips.join('  ·  ')}</div>
+      </div>
+    </div>`;
+  }
+  return `<div class="overlay-row"><span class="overlay-icon">${def.icon}</span><div><strong>${def.label}:</strong> data received.</div></div>`;
 }
 
 // ── Step 3: Design ────────────────────────────────────────────────────────
