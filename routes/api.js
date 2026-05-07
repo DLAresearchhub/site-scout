@@ -83,12 +83,15 @@ router.post('/capture-canvas', express.json({ limit: '12mb' }), (req, res) => {
     const filename = `cap-${safeId}-canvas-${Date.now()}.${ext}`;
     const dir = path.join(__dirname, '../public/site-images');
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    const filePath = path.join(dir, filename);
-    fs.writeFileSync(filePath, buffer);
+    const absPath = path.join(dir, filename);
+    fs.writeFileSync(absPath, buffer);
 
+    // Store the path RELATIVE to project root so processGenerationJob's
+    // path.join(__dirname, '..', file_path.replace(/^\//, '')) resolves correctly.
+    const relPath = `/public/site-images/${filename}`;
     const proxyUrl = `/api/capture/file/${filename}`;
     const direction = (bearing != null) ? `b${Math.round(bearing)}p${Math.round(pitch || 0)}z${Math.round((zoom || 0) * 10) / 10}` : null;
-    const id = usageLogger.cacheCapture(String(site_id), 'mapbox3d', direction, filePath, proxyUrl, null);
+    const id = usageLogger.cacheCapture(String(site_id), 'mapbox3d', direction, relPath, proxyUrl, null);
 
     res.json({ id, type: 'mapbox3d', direction, proxyUrl, label: '3D View — your angle' });
   } catch (error) {

@@ -528,30 +528,82 @@ function updatePromptPreview(pillState) {
   }
 }
 
+// Mirror of services/prompt-builder.js → buildPrompt(). Keep in sync.
+// The right-hand "View raw prompt" drawer reads from this; the actual
+// generation request reads from the server. They must produce the same text.
 function buildClientPromptPreview(pillState) {
   const BUILDING_DESCRIPTORS = {
-    'Office': 'commercial office building', 'Residential': 'residential apartment building',
-    'Mixed Use': 'mixed-use development with retail at ground floor', 'Retail': 'retail development',
-    'School': 'educational building', 'Hotel': 'hotel', 'Industrial': 'light industrial building',
-    'Healthcare': 'healthcare facility',
+    'Office':       'commercial office building',
+    'Residential':  'residential apartment building',
+    'Mixed Use':    'mixed-use development with retail at ground floor and residential above',
+    'Retail':       'retail development',
+    'School':       'educational building',
+    'Hotel':        'hotel',
+    'Industrial':   'light industrial and workspace building',
+    'Healthcare':   'healthcare facility',
   };
-  const { building_type, stories, arch_style, facade, roof, landscaping, time_of_day, weather, surroundings, free_text, skip = {} } = pillState;
-  const desc = BUILDING_DESCRIPTORS[building_type] || building_type;
-  const parts = [
-    `Photorealistic aerial drone CGI.`,
-    `\nNew ${desc}`,
-    stories ? `, ${stories} storeys` : '',
-    !skip.arch_style && arch_style ? `, ${arch_style} style` : '',
-    !skip.facade && facade ? `. Facade: ${facade}` : '',
-    !skip.roof && roof ? `. Roof: ${roof}` : '',
-    !skip.landscaping && landscaping ? `. Landscaping: ${landscaping}` : '',
-    '\n',
-    time_of_day ? `Lighting: ${time_of_day}` : '',
-    !skip.weather && weather ? `, ${weather}` : '',
-    !skip.surroundings && surroundings ? `.\n${surroundings}` : '',
-    free_text ? `\n\n${free_text}` : '',
-  ];
-  return parts.join('').replace(/\n{3,}/g, '\n\n').trim();
+  const LANDSCAPING_MAP = {
+    'Very Green':  'Extensive landscaping — mature trees, planted street edges, green walls and roof gardens.',
+    'Balanced':    'Balanced landscaping — tree-lined paths, planters along the street edge, mixed soft and hard surfaces.',
+    'Minimal':     'Minimal planting — clean hardscape, occasional specimen trees, simple ground treatment.',
+    'Very Paved':  'Predominantly paved hardscape — geometric plazas, granite setts, almost no vegetation.',
+  };
+  const TIME_MAP = {
+    'Dawn':        'just after dawn, the sun low on the horizon casting long, soft pink-orange light',
+    'Morning':     'in mid-morning daylight with long, crisp shadows from a low sun',
+    'Midday':      'in midday sun with short, hard shadows directly beneath the building',
+    'Golden Hour': 'during golden hour, the sun low and warm, casting long directional shadows',
+    'Dusk':        'at dusk, deep blue twilight sky with warm interior lighting glowing through windows',
+    'Night':       'at night, fully illuminated interiors and discreet exterior uplighting against a dark sky',
+  };
+  const WEATHER_MAP = {
+    'Clear':           'under a clear blue sky',
+    'Overcast':        'under soft, even overcast light',
+    'Dramatic clouds': 'with dramatic broken cloud cover and a dynamic sky',
+    'Rain-washed':     'just after rain, with reflective wet surfaces and damp pavements',
+  };
+  const SURROUNDINGS_MAP = {
+    'Dense urban':  'in a dense urban context surrounded by tall buildings and active street life',
+    'Mixed urban':  'in a mixed urban neighbourhood of mid-rise buildings and active streets',
+    'Suburban':     'in a suburban context with lower-density housing and green space nearby',
+    'Green belt':   'at the edge of a green belt with open countryside visible beyond',
+  };
+  const VIEW = 'Camera & framing: Use EXACTLY the same camera position, angle, framing, bearing, and aspect ratio as the source photograph. Do not change the viewpoint, zoom, or pitch. The output must be a photograph captured from this same vantage.';
+
+  const p = pillState || {};
+  const { building_type, stories, arch_style, facade, roof, landscaping, time_of_day, weather, surroundings, free_text, skip = {} } = p;
+  if (!building_type) return '';
+
+  const descriptor = BUILDING_DESCRIPTORS[building_type] || building_type.toLowerCase();
+  const stories_s = stories ? `${stories}-storey ` : '';
+  const style_s   = (!skip.arch_style && arch_style) ? `${arch_style.toLowerCase()} ` : '';
+  const facade_s  = (!skip.facade && facade) ? ` Facade: ${facade.toLowerCase()}.` : '';
+  const roof_s    = (!skip.roof && roof) ? ` Roof: ${roof.toLowerCase()}.` : '';
+  const surr_s    = (!skip.surroundings && surroundings) ? ` Building sits ${SURROUNDINGS_MAP[surroundings] || surroundings.toLowerCase()}.` : '';
+  const building  = `New, ${stories_s}${style_s}${descriptor}.${facade_s}${roof_s}${surr_s}`;
+
+  const time = TIME_MAP[time_of_day] || (time_of_day ? `at ${time_of_day.toLowerCase()}` : 'in soft natural daylight');
+  const wx   = (!skip.weather && weather) ? ` ${WEATHER_MAP[weather] || weather.toLowerCase()}` : '';
+  const lighting = `Captured ${time}${wx}. Sun position, shadow length, direction and softness physically consistent with that time. Balanced ambient illumination with realistic bounce light. Realistic reflections in glazing and polished materials. Lighting is physically accurate, neutral, and non-dramatic.`;
+
+  const landscape = (!skip.landscaping && landscaping) ? (LANDSCAPING_MAP[landscaping] || landscaping) : '';
+  const free      = free_text && free_text.trim() ? `\n\nAdditional notes: ${free_text.trim()}` : '';
+
+  return `Please reimagine this low quality photoshop collage of a ${descriptor} on the empty site shown as a real, high-resolution photograph of a newly completed, inhabited environment captured by a professional architectural photographer.
+
+${VIEW}
+
+Site & geometry: Preserve all existing geometry — the site boundary, surrounding buildings, paths, entrances, kerbs, vegetation, and circulation — exactly as shown in the source image. Place the new building only on the empty plot. Match the scale and proportion of neighbouring buildings.
+
+Architecture & materials: ${building} Newly constructed and well maintained. Clean, uniform surfaces. High-resolution material definition. Sharp edges and precise junctions. Accurate light response for glass, metal, stone and concrete. Do not introduce wear, weathering, dirt, stains, damage, or surface imperfections.${landscape ? `\n\nLandscape: ${landscape}` : ''}
+
+Lighting & exposure: ${lighting}
+
+People: Introduce people naturally where the environment supports human presence — occupants, passers-by, staff, visitors. Candid and unposed; contributing scale and life without appearing staged. Close-range photographic realism: visible skin texture with pores and natural tonal variation, sharp facial detail without stylisation, individually resolved hair strands with realistic light interaction, accurate fabric textures with seams, folds and material weight, natural posture and movement. Subtle motion blur only on people moving naturally; stationary architecture and faces remain sharp.
+
+Camera: High-end full-frame body. 35mm prime lens at f/4.5. Shutter speed appropriate to the available light and subtle human motion. Clean low ISO. Realistic depth of field with focus on the new building. Neutral white balance, accurate colour. Clean exposure with restrained contrast. No cinematic grading, no artistic filters, no stylised effects.
+
+Treat the scene as a real place being photographed, not modified or enhanced. The result must be indistinguishable from a real, professionally captured photograph.${free}`;
 }
 
 function updateGenerateButton() {

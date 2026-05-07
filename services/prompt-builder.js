@@ -1,3 +1,19 @@
+// services/prompt-builder.js
+//
+// Builds the prompt sent to Gemini's image-generation model. The output is a
+// single comprehensive photographic brief that:
+//   1. Treats the captured image (Cesium 3D / Mapbox 3D / satellite) as the
+//      EXACT camera viewpoint to be preserved.
+//   2. Describes the proposed building from the user's pill selections.
+//   3. Bakes in the photographic-realism rules — geometry preservation,
+//      candid people, real materials, accurate light, real camera settings —
+//      so Gemini renders a believable photograph instead of a generic CGI.
+//
+// IMPORTANT: keep this in sync with public/js/app.js → buildClientPromptPreview.
+// The right-hand "View raw prompt" drawer reads from the client mirror; the
+// actual generation request reads from this file. They must produce the same
+// text or the user is shown a lie.
+
 const SEGMENT_COLORS = {
   building:     '#16a34a',
   stories:      '#16a34a',
@@ -11,36 +27,6 @@ const SEGMENT_COLORS = {
   free_text:    '#6b7280',
 };
 
-const LANDSCAPING_MAP = {
-  'Very Green':  'with extensive landscaping, mature trees, green walls, and planted areas throughout',
-  'Balanced':    'with a balanced mix of soft landscaping and hardscape, tree-lined paths and plazas',
-  'Minimal':     'with minimal planting, clean hardscape, simple ground treatment',
-  'Very Paved':  'with predominantly paved urban hardscape, geometric plazas, and minimal vegetation',
-};
-
-const TIME_MAP = {
-  'Dawn':        'at dawn with soft pink and orange light on the horizon',
-  'Morning':     'in bright morning light with long shadows',
-  'Midday':      'in harsh midday sun with crisp shadows',
-  'Golden Hour': 'during golden hour with warm, directional light and long shadows',
-  'Dusk':        'at dusk with deep blue sky and warm interior lighting glowing',
-  'Night':       'at night with dramatic uplighting and illuminated interiors',
-};
-
-const WEATHER_MAP = {
-  'Clear':           'under clear blue sky',
-  'Overcast':        'under soft overcast light with even shadows',
-  'Dramatic clouds': 'with dramatic storm clouds and dynamic sky',
-  'Rain-washed':     'on a rain-washed day with reflective wet surfaces',
-};
-
-const SURROUNDINGS_MAP = {
-  'Dense urban':  'surrounded by dense urban cityscape, tall buildings, and busy streets',
-  'Mixed urban':  'in a mixed urban neighbourhood with mid-rise buildings and street activity',
-  'Suburban':     'in a suburban context with lower-density housing and green space nearby',
-  'Green belt':   'at the edge of a green belt with open countryside visible beyond',
-};
-
 const BUILDING_DESCRIPTORS = {
   'Office':       'commercial office building',
   'Residential':  'residential apartment building',
@@ -52,43 +38,92 @@ const BUILDING_DESCRIPTORS = {
   'Healthcare':   'healthcare facility',
 };
 
-const VIEW_INSTRUCTIONS = {
-  aerial:           'Photorealistic aerial drone CGI looking down at approximately 45 degrees. Show the full building footprint, roof, and immediate surroundings.',
-  perspective_3d:   'Using EXACTLY the same oblique 3D camera angle and perspective as this photograph, place the proposed building on the empty site shown. Do not change the viewpoint, zoom, or bearing. Match the scale and proportion of the surrounding buildings. Show realistic shadows, materials, and reflections consistent with the site context.',
-  perspective_dusk: 'Using EXACTLY the same oblique 3D camera angle and perspective as this photograph, place the proposed building on the empty site at dusk — warm interior lighting glowing from windows, exterior uplighting, and a deep blue twilight sky. Do not change the viewpoint or bearing.',
-  perspective_night: 'Using EXACTLY the same oblique 3D camera angle and perspective as this photograph, place the proposed building on the empty site at night — fully illuminated interiors, dramatic exterior uplighting, and ambient street lighting. Do not change the viewpoint or bearing.',
-  street_front:     'Photorealistic street-level CGI of the front facade. Eye-level perspective from across the street showing the full elevation.',
-  street_corner:    'Photorealistic street-level CGI from a corner angle showing two facades. Human-scale perspective with pedestrians and street activity.',
-  street_entrance:  'Photorealistic street-level CGI focused on the main entrance and ground floor. Close-up perspective showing materiality and detail.',
+const LANDSCAPING_MAP = {
+  'Very Green':  'Extensive landscaping — mature trees, planted street edges, green walls and roof gardens.',
+  'Balanced':    'Balanced landscaping — tree-lined paths, planters along the street edge, mixed soft and hard surfaces.',
+  'Minimal':     'Minimal planting — clean hardscape, occasional specimen trees, simple ground treatment.',
+  'Very Paved':  'Predominantly paved hardscape — geometric plazas, granite setts, almost no vegetation.',
 };
 
-function buildPrompt(pillState, viewType = 'aerial') {
-  const {
-    building_type, stories, arch_style, facade, roof,
-    landscaping, time_of_day, weather, surroundings, free_text,
-    skip = {}
-  } = pillState;
+const TIME_MAP = {
+  'Dawn':        'just after dawn, the sun low on the horizon casting long, soft pink-orange light',
+  'Morning':     'in mid-morning daylight with long, crisp shadows from a low sun',
+  'Midday':      'in midday sun with short, hard shadows directly beneath the building',
+  'Golden Hour': 'during golden hour, the sun low and warm, casting long directional shadows',
+  'Dusk':        'at dusk, deep blue twilight sky with warm interior lighting glowing through windows',
+  'Night':       'at night, fully illuminated interiors and discreet exterior uplighting against a dark sky',
+};
 
-  const descriptor = BUILDING_DESCRIPTORS[building_type] || building_type.toLowerCase();
-  const storiesText = stories ? `, ${stories} storeys` : '';
-  const styleText = (!skip.arch_style && arch_style) ? `, ${arch_style} architectural style` : '';
-  const facadeText = (!skip.facade && facade) ? `. Facade: ${facade}` : '';
-  const roofText = (!skip.roof && roof) ? `. Roof: ${roof}` : '';
-  const landscapeText = (!skip.landscaping && landscaping) ? `. ${LANDSCAPING_MAP[landscaping] || landscaping}` : '';
-  const timeText = TIME_MAP[time_of_day] || time_of_day || 'during golden hour';
-  const weatherText = (!skip.weather && weather) ? ` ${WEATHER_MAP[weather] || weather}` : '';
-  const surroundText = (!skip.surroundings && surroundings) ? `. ${SURROUNDINGS_MAP[surroundings] || surroundings}` : '';
-  const freeText = free_text ? ` ${free_text.trim()}` : '';
+const WEATHER_MAP = {
+  'Clear':           'under a clear blue sky',
+  'Overcast':        'under soft, even overcast light',
+  'Dramatic clouds': 'with dramatic broken cloud cover and a dynamic sky',
+  'Rain-washed':     'just after rain, with reflective wet surfaces and damp pavements',
+};
 
-  const viewInstruction = VIEW_INSTRUCTIONS[viewType] || VIEW_INSTRUCTIONS.aerial;
+const SURROUNDINGS_MAP = {
+  'Dense urban':  'in a dense urban context surrounded by tall buildings and active street life',
+  'Mixed urban':  'in a mixed urban neighbourhood of mid-rise buildings and active streets',
+  'Suburban':     'in a suburban context with lower-density housing and green space nearby',
+  'Green belt':   'at the edge of a green belt with open countryside visible beyond',
+};
 
-  return `${viewInstruction}
+// Per-view framing instruction. The "perspective_*" variants explicitly tell
+// the model NOT to change the camera — used for our Cesium / 3D captures.
+const VIEW_INSTRUCTIONS = {
+  aerial: 'Camera & framing: Aerial drone perspective looking down at approximately 45° to the ground, showing the full building footprint, roof, and immediate surrounding context. Preserve the framing and aspect ratio of the source image.',
+  perspective_3d: 'Camera & framing: Use EXACTLY the same camera position, angle, framing, bearing, and aspect ratio as the source photograph. Do not change the viewpoint, zoom, or pitch. The output must be a photograph captured from this same vantage.',
+  perspective_dusk: 'Camera & framing: Use EXACTLY the same camera position, angle, framing, bearing, and aspect ratio as the source photograph. The scene is captured at dusk — deep blue twilight sky with warm interior lighting glowing through windows. Do not change the viewpoint, zoom, or pitch.',
+  perspective_night: 'Camera & framing: Use EXACTLY the same camera position, angle, framing, bearing, and aspect ratio as the source photograph. The scene is captured at night — fully illuminated interiors, discreet exterior uplighting, ambient street lighting. Do not change the viewpoint, zoom, or pitch.',
+  street_front: 'Camera & framing: Eye-level perspective from across the street showing the full front elevation. 35mm lens framing, slight upward tilt to capture the parapet.',
+  street_corner: 'Camera & framing: Eye-level corner perspective showing two facades at an oblique angle. Human-scale viewpoint.',
+  street_entrance: 'Camera & framing: Eye-level perspective focused on the main entrance and ground floor — close enough to read materiality and detail.',
+};
 
-Take this photograph of the existing empty site and generate a photorealistic architectural visualisation showing a new ${descriptor}${storiesText}${styleText}${facadeText}${roofText}${landscapeText} built on this site${surroundText}.
+function buildBuildingClause(p) {
+  const { building_type, stories, arch_style, facade, roof, surroundings, skip = {} } = p;
+  const desc = BUILDING_DESCRIPTORS[building_type] || (building_type ? building_type.toLowerCase() : 'building');
+  const stories_s = stories ? `${stories}-storey ` : '';
+  const style_s   = (!skip.arch_style && arch_style) ? `${arch_style.toLowerCase()} ` : '';
+  const facade_s  = (!skip.facade && facade) ? ` Facade: ${facade.toLowerCase()}.` : '';
+  const roof_s    = (!skip.roof && roof) ? ` Roof: ${roof.toLowerCase()}.` : '';
+  const surr_s    = (!skip.surroundings && surroundings) ? ` Building sits ${SURROUNDINGS_MAP[surroundings] || surroundings.toLowerCase()}.` : '';
+  return `New, ${stories_s}${style_s}${desc}.${facade_s}${roof_s}${surr_s}`;
+}
 
-Lighting: ${timeText}${weatherText}.
+function buildLightingClause(p) {
+  const { time_of_day, weather, skip = {} } = p;
+  const time = TIME_MAP[time_of_day] || (time_of_day ? `at ${time_of_day.toLowerCase()}` : 'in soft natural daylight');
+  const wx   = (!skip.weather && weather) ? ` ${WEATHER_MAP[weather] || weather.toLowerCase()}` : '';
+  return `Captured ${time}${wx}. Sun position, shadow length, direction and softness physically consistent with that time. Balanced ambient illumination with realistic bounce light. Realistic reflections in glazing and polished materials. Lighting is physically accurate, neutral, and non-dramatic.`;
+}
 
-The building should fit naturally into the site boundaries visible in the photograph. Maintain the existing street geometry, neighbouring buildings, and surrounding context. The generated image should look like a professional architectural CGI or design-stage render — photorealistic, not cartoon or sketch.${freeText}`;
+function buildPrompt(pillState, viewType = 'perspective_3d') {
+  const p = pillState || {};
+  const { landscaping, free_text, skip = {} } = p;
+
+  const view       = VIEW_INSTRUCTIONS[viewType] || VIEW_INSTRUCTIONS.perspective_3d;
+  const descriptor = BUILDING_DESCRIPTORS[p.building_type] || (p.building_type || 'building').toLowerCase();
+  const building   = buildBuildingClause(p);
+  const lighting   = buildLightingClause(p);
+  const landscape  = (!skip.landscaping && landscaping) ? (LANDSCAPING_MAP[landscaping] || landscaping) : '';
+  const free       = free_text && free_text.trim() ? `\n\nAdditional notes: ${free_text.trim()}` : '';
+
+  return `Please reimagine this low quality photoshop collage of a ${descriptor} on the empty site shown as a real, high-resolution photograph of a newly completed, inhabited environment captured by a professional architectural photographer.
+
+${view}
+
+Site & geometry: Preserve all existing geometry — the site boundary, surrounding buildings, paths, entrances, kerbs, vegetation, and circulation — exactly as shown in the source image. Place the new building only on the empty plot. Match the scale and proportion of neighbouring buildings.
+
+Architecture & materials: ${building} Newly constructed and well maintained. Clean, uniform surfaces. High-resolution material definition. Sharp edges and precise junctions. Accurate light response for glass, metal, stone and concrete. Do not introduce wear, weathering, dirt, stains, damage, or surface imperfections.${landscape ? `\n\nLandscape: ${landscape}` : ''}
+
+Lighting & exposure: ${lighting}
+
+People: Introduce people naturally where the environment supports human presence — occupants, passers-by, staff, visitors. Candid and unposed; contributing scale and life without appearing staged. Close-range photographic realism: visible skin texture with pores and natural tonal variation, sharp facial detail without stylisation, individually resolved hair strands with realistic light interaction, accurate fabric textures with seams, folds and material weight, natural posture and movement. Subtle motion blur only on people moving naturally; stationary architecture and faces remain sharp.
+
+Camera: High-end full-frame body. 35mm prime lens at f/4.5. Shutter speed appropriate to the available light and subtle human motion. Clean low ISO. Realistic depth of field with focus on the new building. Neutral white balance, accurate colour. Clean exposure with restrained contrast. No cinematic grading, no artistic filters, no stylised effects.
+
+Treat the scene as a real place being photographed, not modified or enhanced. The result must be indistinguishable from a real, professionally captured photograph.${free}`;
 }
 
 function buildPromptSegments(pillState) {
@@ -99,7 +134,6 @@ function buildPromptSegments(pillState) {
   } = pillState;
 
   const segments = [];
-
   if (building_type) segments.push({ text: building_type, color: SEGMENT_COLORS.building, key: 'building_type' });
   if (stories)       segments.push({ text: stories, color: SEGMENT_COLORS.stories, key: 'stories' });
   if (!skip.arch_style && arch_style) segments.push({ text: arch_style, color: SEGMENT_COLORS.arch_style, key: 'arch_style' });
@@ -110,7 +144,6 @@ function buildPromptSegments(pillState) {
   if (!skip.weather && weather)       segments.push({ text: weather, color: SEGMENT_COLORS.weather, key: 'weather' });
   if (!skip.surroundings && surroundings) segments.push({ text: surroundings, color: SEGMENT_COLORS.surroundings, key: 'surroundings' });
   if (free_text && free_text.trim()) segments.push({ text: free_text.trim(), color: SEGMENT_COLORS.free_text, key: 'free_text' });
-
   return segments;
 }
 
