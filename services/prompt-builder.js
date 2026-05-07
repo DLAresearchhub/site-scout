@@ -7,7 +7,7 @@
 //   2. Describes the proposed building from the user's pill selections.
 //   3. Bakes in the photographic-realism rules — geometry preservation,
 //      candid people, real materials, accurate light, real camera settings —
-//      so Gemini renders a believable photograph instead of a generic CGI.
+//      so Gemini renders a believable photograph instead of a generic illustration.
 //
 // IMPORTANT: keep this in sync with public/js/app.js → buildClientPromptPreview.
 // The right-hand "View raw prompt" drawer reads from the client mirror; the
@@ -101,7 +101,7 @@ function buildLightingClause(p) {
 function buildPrompt(pillState, viewType = 'perspective_3d', opts = {}) {
   const p = pillState || {};
   const { landscaping, free_text, skip = {} } = p;
-  const { refDescriptions = [], hasBoundary = false } = opts;
+  const { refDescriptions = [], hasBoundary = false, presetAddendum = '' } = opts;
 
   const view       = VIEW_INSTRUCTIONS[viewType] || VIEW_INSTRUCTIONS.perspective_3d;
   const descriptor = BUILDING_DESCRIPTORS[p.building_type] || (p.building_type || 'building').toLowerCase();
@@ -118,6 +118,10 @@ function buildPrompt(pillState, viewType = 'perspective_3d', opts = {}) {
     ? `\n\nReference influences (apply ONLY to the new building, never to anything around it):\n${refDescriptions.map((d, i) => `  ${i + 1}. ${d}`).join('\n')}\n\nLift the materials, fenestration patterns, and detail treatments described above and apply them to the new building's facade and roof. Do not change neighbouring buildings to match the references — references inform the new building only.`
     : '';
 
+  const presetClause = presetAddendum && presetAddendum.trim()
+    ? `\n\n${presetAddendum.trim()}`
+    : '';
+
   return `Please reimagine this low quality photoshop collage of a ${descriptor} on the empty site shown as a real, high-resolution photograph of a newly completed, inhabited environment captured by a professional architectural photographer.
 
 ${view}
@@ -126,7 +130,7 @@ Site & geometry: ${boundaryClause} Preserve all existing geometry — the site b
 
 PRESERVE EXACTLY (do NOT modify): Every neighbouring building must remain pixel-perfect identical to the source — same height, same parapet line, same facade material, same window grid, same roofline, same colour. Roads, kerbs, pavements, road markings, street furniture, parked vehicles, trees, hedges, planters, the horizon line and the sky must remain exactly as shown. The only change anywhere in the image is the new building inserted on the empty site.
 
-Architecture & materials: ${building} Newly constructed and well maintained. Clean, uniform surfaces. High-resolution material definition. Sharp edges and precise junctions. Accurate light response for glass, metal, stone and concrete. Do not introduce wear, weathering, dirt, stains, damage, or surface imperfections.${landscape ? `\n\nLandscape (inside the build site only): ${landscape}` : ''}${refClause}
+Architecture & materials: ${building} Newly constructed and well maintained. Clean, uniform surfaces. High-resolution material definition. Sharp edges and precise junctions. Accurate light response for glass, metal, stone and concrete. Do not introduce wear, weathering, dirt, stains, damage, or surface imperfections.${presetClause}${landscape ? `\n\nLandscape (inside the build site only): ${landscape}` : ''}${refClause}
 
 Lighting & exposure: ${lighting}
 
@@ -158,4 +162,40 @@ function buildPromptSegments(pillState) {
   return segments;
 }
 
-module.exports = { buildPrompt, buildPromptSegments, SEGMENT_COLORS };
+// ── Follow-up "More photographs" prompts ────────────────────────────────────
+// Source image is a previously-generated photograph of the new building. The
+// follow-up asks Gemini to re-photograph the SAME building from a different
+// human-scale viewpoint with active life around it.
+
+const FOLLOWUP_VIEW_INSTRUCTIONS = {
+  street_eye_level: 'Re-photograph the SAME building shown in the source image from human eye-level on the pavement opposite — a 35 mm lens framing the full front elevation, with active street life in the foreground: a small group of people walking past, a parent pushing a buggy, a person on a bike. Buildings and materials must remain identical to the source.',
+  plaza_active:     'Re-photograph the SAME building shown in the source image from a public plaza or landscaped open space immediately in front of it — eye-level, slight upward tilt to read the parapet, families with young children playing, a couple walking a dog, people sitting on benches reading. If a green space exists in the source it should be richly populated.',
+  entrance_busy:    'Re-photograph the SAME building shown in the source image as a close-up of the main entrance and ground floor — close enough to read materials and signage. People are arriving and leaving: someone holding the door, a small group chatting, a delivery cyclist. Subtle motion blur on moving people; the architecture sharp.',
+  lifestyle_moment: 'Re-photograph the SAME building shown in the source image as a candid lifestyle moment — late-afternoon golden hour, a small outdoor cafe terrace with diners at tables, baristas serving, a dog under a chair, planters spilling over with greenery. The building anchors the background. The mood is calm, lived-in, real.',
+};
+
+function buildFollowupPrompt(pillState, viewType, opts = {}) {
+  const p = pillState || {};
+  const { presetAddendum = '' } = opts;
+  const descriptor = BUILDING_DESCRIPTORS[p.building_type] || (p.building_type || 'building').toLowerCase();
+  const view = FOLLOWUP_VIEW_INSTRUCTIONS[viewType] || FOLLOWUP_VIEW_INSTRUCTIONS.street_eye_level;
+  const presetClause = presetAddendum && presetAddendum.trim() ? `\n\n${presetAddendum.trim()}` : '';
+
+  return `Please re-photograph the building shown in this source image from a new human-scale viewpoint, as a real, high-resolution photograph captured by a professional architectural photographer.
+
+${view}
+
+PRESERVE EXACTLY: The building's form, materials, fenestration pattern, roofline, colour and proportions must be IDENTICAL to the source image. Do not redesign the building. The only change is the camera viewpoint and the people / life now visible around it. Surrounding context (neighbouring buildings, roads, sky) must remain plausible and quiet — never compete with the subject.
+
+People & life: People are candid, unposed, naturally integrated into the scene — staff, occupants, passers-by, families, dog walkers, cyclists where appropriate. Close-range photographic realism: visible skin texture with pores, sharp facial detail without stylisation, individually resolved hair strands, accurate fabric textures with seams and folds, natural posture and movement. Subtle motion blur only on people moving naturally; stationary architecture and faces remain sharp.
+
+Subject: ${descriptor} (re-photographed, not redesigned).${presetClause}
+
+Lighting & exposure: Physically accurate natural daylight consistent with the source image's time of day. Sun angle, shadow direction and softness consistent with that time. Balanced ambient illumination with realistic bounce light. Realistic reflections in glazing and polished materials. Lighting is neutral and non-dramatic.
+
+Camera: High-end full-frame body. 35 mm prime lens at f/4.5. Shutter speed appropriate to subtle human motion. Clean low ISO. Realistic depth of field with focus on the subject building. Neutral white balance, accurate colour. Clean exposure with restrained contrast. No cinematic grading, no artistic filters, no stylised effects.
+
+Treat the scene as a real place being photographed. The result must be indistinguishable from a real, professionally captured photograph.`;
+}
+
+module.exports = { buildPrompt, buildFollowupPrompt, buildPromptSegments, SEGMENT_COLORS };

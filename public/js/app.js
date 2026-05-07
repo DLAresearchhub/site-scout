@@ -16,6 +16,10 @@ const state = {
   overviewMap: null,
   overlayPrefs: {},        // { flood: true, amenities: true, listed: false, solar: false }
   overlayCache: {},        // siteKey → { overlayName: data }
+  presets: {},             // building_type → preset[] (from /api/presets)
+  activePreset: null,      // selected preset object
+  followupJobId: null,
+  chosenResultUrl: null,
 };
 
 // ── Init ──────────────────────────────────────────────────────────────────
@@ -46,9 +50,30 @@ document.addEventListener('DOMContentLoaded', () => {
   const bClear = document.getElementById('boundary-clear-btn');
   const bSkip  = document.getElementById('boundary-skip-btn');
   const bSave  = document.getElementById('boundary-save-btn');
+  const bUndo  = document.getElementById('boundary-undo-btn');
+  const bClose = document.getElementById('boundary-close-poly-btn');
   if (bClear) bClear.addEventListener('click', () => clearBoundary());
   if (bSkip)  bSkip.addEventListener('click',  () => skipBoundary());
   if (bSave)  bSave.addEventListener('click',  () => saveBoundary());
+  if (bUndo)  bUndo.addEventListener('click',  () => undoBoundary());
+  if (bClose) bClose.addEventListener('click', () => closePolygon());
+
+  // Tool selector (brush / line / polygon / circle)
+  document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _boundary.tool = btn.dataset.tool;
+      _boundary.polyVerts = []; // cancel any in-progress polygon when switching tools
+      const closeBtn = document.getElementById('boundary-close-poly-btn');
+      if (closeBtn) closeBtn.style.display = (_boundary.tool === 'polygon') ? 'inline-flex' : 'none';
+    });
+  });
+
+  // Fetch presets (used in Step 3 when a building type is picked)
+  fetch('/api/presets').then(r => r.json()).then(data => {
+    state.presets = data || {};
+  }).catch(err => console.warn('[presets] fetch failed:', err));
 
   // Load user/credits
   fetch('/api/me').then(r => r.json()).then(data => {
@@ -383,6 +408,7 @@ async function useThisView() {
 }
 
 // ── Boundary editor (red-line site outline) ─────────────────────────────────
+// Tools: brush · line · polygon · circle. Plus undo + clear + close-polygon.
 
 const _boundary = {
   baseDataUrl: null,
@@ -390,14 +416,31 @@ const _boundary = {
   baseCtx: null,
   width: 0,
   height: 0,
+  hasInk: false,
+  tool: 'brush',
+  // Brush
   drawing: false,
   lastX: 0,
   lastY: 0,
-  hasInk: false,
+  // Line / Circle preview
+  previewSnap: null,
+  startX: 0,
+  startY: 0,
+  // Polygon (vertex-by-vertex)
+  polyVerts: [],
+  polyCommittedSnap: null,
+  polyCursorX: 0,
+  polyCursorY: 0,
+  // Undo
+  undoStack: [],
 };
 
+const STROKE_RGBA = 'rgba(220, 38, 38, 0.95)';
+const STROKE_W = 6;
+const VERTEX_R = 5;
+const UNDO_LIMIT = 25;
+
 function enterBoundaryEditor(dataUrl) {
-  // Hide viewer + use-this-view button; show boundary editor
   document.querySelector('.viewer-shell').style.display = 'none';
   document.getElementById('step2-actions').style.display = 'none';
   document.querySelector('.capture-instructions').style.display = 'none';
@@ -409,7 +452,6 @@ function enterBoundaryEditor(dataUrl) {
 
   const img = new Image();
   img.onload = () => {
-    // Cap the rendered size so the editor fits the viewport while still being usable
     const maxW = Math.min(960, document.querySelector('#boundary-canvas-wrap').clientWidth || 960);
     const scale = Math.min(1, maxW / img.naturalWidth);
     const w = Math.round(img.naturalWidth * scale);
@@ -424,55 +466,204 @@ function enterBoundaryEditor(dataUrl) {
     _boundary.baseCtx = baseCanvas.getContext('2d');
     _boundary.drawCtx = drawCanvas.getContext('2d');
     _boundary.hasInk = false;
+    _boundary.undoStack = [];
+    _boundary.polyVerts = [];
+    _boundary.previewSnap = null;
 
     _boundary.baseCtx.drawImage(img, 0, 0, w, h);
     _boundary.drawCtx.clearRect(0, 0, w, h);
 
-    // Stroke style — thick semi-transparent red, round joins
     _boundary.drawCtx.lineCap = 'round';
     _boundary.drawCtx.lineJoin = 'round';
-    _boundary.drawCtx.lineWidth = 6;
-    _boundary.drawCtx.strokeStyle = 'rgba(220, 38, 38, 0.95)';
+    _boundary.drawCtx.lineWidth = STROKE_W;
+    _boundary.drawCtx.strokeStyle = STROKE_RGBA;
+    _boundary.drawCtx.fillStyle = STROKE_RGBA;
 
     bindBoundaryDrawing(drawCanvas);
   };
   img.src = dataUrl;
 }
 
-function bindBoundaryDrawing(canvas) {
-  const start = (clientX, clientY) => {
-    const rect = canvas.getBoundingClientRect();
-    _boundary.drawing = true;
-    _boundary.lastX = (clientX - rect.left) * (canvas.width  / rect.width);
-    _boundary.lastY = (clientY - rect.top)  * (canvas.height / rect.height);
-  };
-  const move = (clientX, clientY) => {
-    if (!_boundary.drawing) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = (clientX - rect.left) * (canvas.width  / rect.width);
-    const y = (clientY - rect.top)  * (canvas.height / rect.height);
-    const ctx = _boundary.drawCtx;
-    ctx.beginPath();
-    ctx.moveTo(_boundary.lastX, _boundary.lastY);
-    ctx.lineTo(x, y);
-    ctx.stroke();
-    _boundary.lastX = x; _boundary.lastY = y;
-    _boundary.hasInk = true;
-  };
-  const end = () => { _boundary.drawing = false; };
+function _coords(canvas, clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  return [
+    (clientX - rect.left) * (canvas.width  / rect.width),
+    (clientY - rect.top)  * (canvas.height / rect.height),
+  ];
+}
 
-  canvas.onmousedown = (e) => { e.preventDefault(); start(e.clientX, e.clientY); };
-  canvas.onmousemove = (e) => move(e.clientX, e.clientY);
-  window.addEventListener('mouseup', end);
-  canvas.ontouchstart = (e) => { e.preventDefault(); const t = e.touches[0]; start(t.clientX, t.clientY); };
-  canvas.ontouchmove  = (e) => { e.preventDefault(); const t = e.touches[0]; move(t.clientX, t.clientY); };
-  canvas.ontouchend   = end;
+function _pushUndo() {
+  if (!_boundary.drawCtx) return;
+  try {
+    _boundary.undoStack.push(_boundary.drawCtx.getImageData(0, 0, _boundary.width, _boundary.height));
+    if (_boundary.undoStack.length > UNDO_LIMIT) _boundary.undoStack.shift();
+  } catch (_) {}
+}
+
+function undoBoundary() {
+  if (!_boundary.drawCtx) return;
+  if (_boundary.undoStack.length === 0) return;
+  const prev = _boundary.undoStack.pop();
+  _boundary.drawCtx.putImageData(prev, 0, 0);
+  _boundary.polyVerts = [];
+  _boundary.previewSnap = null;
+  _boundary.hasInk = !_isCanvasBlank();
+}
+
+function _isCanvasBlank() {
+  const d = _boundary.drawCtx.getImageData(0, 0, _boundary.width, _boundary.height).data;
+  for (let i = 3; i < d.length; i += 4) if (d[i] !== 0) return false;
+  return true;
+}
+
+function _drawVertexDots(verts) {
+  const ctx = _boundary.drawCtx;
+  ctx.save();
+  ctx.fillStyle = STROKE_RGBA;
+  for (const v of verts) {
+    ctx.beginPath();
+    ctx.arc(v.x, v.y, VERTEX_R, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function _renderPolygonPreview() {
+  if (!_boundary.polyCommittedSnap) return;
+  const ctx = _boundary.drawCtx;
+  ctx.putImageData(_boundary.polyCommittedSnap, 0, 0);
+  // Re-draw vertex dots and connecting lines so far
+  const verts = _boundary.polyVerts;
+  if (verts.length > 0) {
+    ctx.beginPath();
+    ctx.moveTo(verts[0].x, verts[0].y);
+    for (let i = 1; i < verts.length; i++) ctx.lineTo(verts[i].x, verts[i].y);
+    // Preview line from last vertex to current cursor
+    ctx.lineTo(_boundary.polyCursorX, _boundary.polyCursorY);
+    ctx.setLineDash([8, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    _drawVertexDots(verts);
+  }
+}
+
+function closePolygon() {
+  if (!_boundary.drawCtx || _boundary.polyVerts.length < 3) {
+    _boundary.polyVerts = [];
+    _boundary.polyCommittedSnap = null;
+    return;
+  }
+  const ctx = _boundary.drawCtx;
+  if (_boundary.polyCommittedSnap) ctx.putImageData(_boundary.polyCommittedSnap, 0, 0);
+  ctx.beginPath();
+  const verts = _boundary.polyVerts;
+  ctx.moveTo(verts[0].x, verts[0].y);
+  for (let i = 1; i < verts.length; i++) ctx.lineTo(verts[i].x, verts[i].y);
+  ctx.closePath();
+  ctx.stroke();
+  _boundary.polyVerts = [];
+  _boundary.polyCommittedSnap = null;
+  _boundary.hasInk = true;
+}
+
+function bindBoundaryDrawing(canvas) {
+  const onDown = (clientX, clientY) => {
+    const [x, y] = _coords(canvas, clientX, clientY);
+
+    if (_boundary.tool === 'brush') {
+      _pushUndo();
+      _boundary.drawing = true;
+      _boundary.lastX = x; _boundary.lastY = y;
+      // Single-pixel start dot for tap-to-mark
+      const ctx = _boundary.drawCtx;
+      ctx.beginPath(); ctx.arc(x, y, STROKE_W / 2, 0, Math.PI * 2); ctx.fill();
+      _boundary.hasInk = true;
+    } else if (_boundary.tool === 'line') {
+      _pushUndo();
+      _boundary.drawing = true;
+      _boundary.startX = x; _boundary.startY = y;
+      _boundary.previewSnap = _boundary.drawCtx.getImageData(0, 0, _boundary.width, _boundary.height);
+    } else if (_boundary.tool === 'circle') {
+      _pushUndo();
+      _boundary.drawing = true;
+      _boundary.startX = x; _boundary.startY = y;
+      _boundary.previewSnap = _boundary.drawCtx.getImageData(0, 0, _boundary.width, _boundary.height);
+    } else if (_boundary.tool === 'polygon') {
+      // First click: snapshot for preview restore
+      if (_boundary.polyVerts.length === 0) {
+        _pushUndo();
+        _boundary.polyCommittedSnap = _boundary.drawCtx.getImageData(0, 0, _boundary.width, _boundary.height);
+      }
+      _boundary.polyVerts.push({ x, y });
+      _boundary.polyCursorX = x; _boundary.polyCursorY = y;
+      _renderPolygonPreview();
+      _boundary.hasInk = true;
+    }
+  };
+
+  const onMove = (clientX, clientY) => {
+    const [x, y] = _coords(canvas, clientX, clientY);
+    const ctx = _boundary.drawCtx;
+
+    if (_boundary.tool === 'brush' && _boundary.drawing) {
+      ctx.beginPath();
+      ctx.moveTo(_boundary.lastX, _boundary.lastY);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      _boundary.lastX = x; _boundary.lastY = y;
+      _boundary.hasInk = true;
+    } else if (_boundary.tool === 'line' && _boundary.drawing && _boundary.previewSnap) {
+      ctx.putImageData(_boundary.previewSnap, 0, 0);
+      ctx.beginPath();
+      ctx.moveTo(_boundary.startX, _boundary.startY);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+    } else if (_boundary.tool === 'circle' && _boundary.drawing && _boundary.previewSnap) {
+      ctx.putImageData(_boundary.previewSnap, 0, 0);
+      const r = Math.hypot(x - _boundary.startX, y - _boundary.startY);
+      ctx.beginPath();
+      ctx.arc(_boundary.startX, _boundary.startY, r, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (_boundary.tool === 'polygon' && _boundary.polyVerts.length > 0) {
+      _boundary.polyCursorX = x; _boundary.polyCursorY = y;
+      _renderPolygonPreview();
+    }
+  };
+
+  const onUp = () => {
+    if (_boundary.tool === 'line' && _boundary.drawing) {
+      _boundary.drawing = false;
+      _boundary.previewSnap = null;
+      _boundary.hasInk = true;
+    } else if (_boundary.tool === 'circle' && _boundary.drawing) {
+      _boundary.drawing = false;
+      _boundary.previewSnap = null;
+      _boundary.hasInk = true;
+    } else if (_boundary.tool === 'brush') {
+      _boundary.drawing = false;
+    }
+  };
+
+  const onDblClick = () => {
+    if (_boundary.tool === 'polygon' && _boundary.polyVerts.length >= 3) closePolygon();
+  };
+
+  canvas.onmousedown  = (e) => { e.preventDefault(); onDown(e.clientX, e.clientY); };
+  canvas.onmousemove  = (e) => onMove(e.clientX, e.clientY);
+  window.addEventListener('mouseup', onUp);
+  canvas.ondblclick   = onDblClick;
+  canvas.ontouchstart = (e) => { e.preventDefault(); const t = e.touches[0]; onDown(t.clientX, t.clientY); };
+  canvas.ontouchmove  = (e) => { e.preventDefault(); const t = e.touches[0]; onMove(t.clientX, t.clientY); };
+  canvas.ontouchend   = onUp;
 }
 
 function clearBoundary() {
   if (!_boundary.drawCtx) return;
+  _pushUndo();
   _boundary.drawCtx.clearRect(0, 0, _boundary.width, _boundary.height);
   _boundary.hasInk = false;
+  _boundary.polyVerts = [];
+  _boundary.polyCommittedSnap = null;
 }
 
 function exitBoundaryEditor() {
@@ -668,6 +859,57 @@ function selectBuildingType(btn) {
   document.querySelectorAll('.building-tile').forEach(t => t.classList.remove('selected'));
   btn.classList.add('selected');
   window.PromptBuilder.setState({ building_type: btn.dataset.type });
+  state.activePreset = null;
+  renderPresetStrip(btn.dataset.type);
+  updateGenerateButton();
+}
+
+function renderPresetStrip(buildingType) {
+  const section = document.getElementById('preset-section');
+  const strip = document.getElementById('preset-strip');
+  const hint = document.getElementById('preset-hint');
+  if (!section || !strip) return;
+
+  const list = (state.presets && state.presets[buildingType]) || [];
+  if (list.length === 0) { section.style.display = 'none'; return; }
+
+  section.style.display = '';
+  hint.textContent = `Pick a starting direction for your ${buildingType.toLowerCase()} — applies the pills + adds design intent to the prompt. You can still tweak everything below.`;
+  strip.innerHTML = '';
+
+  list.forEach(preset => {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'preset-card';
+    card.dataset.presetId = preset.id;
+    card.innerHTML = `
+      <span class="preset-icon">${preset.icon || '✨'}</span>
+      <span class="preset-label">${preset.label}</span>
+    `;
+    card.addEventListener('click', () => applyPreset(preset, card));
+    strip.appendChild(card);
+  });
+}
+
+function applyPreset(preset, cardEl) {
+  document.querySelectorAll('.preset-card').forEach(c => c.classList.remove('selected'));
+  if (cardEl) cardEl.classList.add('selected');
+  state.activePreset = preset;
+
+  // Apply pill overrides
+  if (preset.pillOverrides) {
+    window.PromptBuilder.setState(preset.pillOverrides);
+
+    // Reflect new pill choices in the UI (tap the matching pill button)
+    Object.entries(preset.pillOverrides).forEach(([key, value]) => {
+      const row = document.querySelector(`.pill-row[data-key="${key}"]`);
+      if (!row) return;
+      row.querySelectorAll('.pill').forEach(p => {
+        p.classList.toggle('selected', p.dataset.value === value);
+      });
+    });
+  }
+
   updateGenerateButton();
 }
 
@@ -768,6 +1010,10 @@ function buildClientPromptPreview(pillState) {
     ? `\n\nReference influences (apply ONLY to the new building, never to anything around it):\n  [${refCount} reference image${refCount === 1 ? '' : 's'} will be auto-described by Gemini text-vision at generation time and the descriptions inserted here]\n\nLift the materials, fenestration patterns, and detail treatments from the references and apply them to the new building's facade and roof. References must NOT change neighbouring buildings.`
     : '';
 
+  const presetClause = state.activePreset && state.activePreset.promptAddendum
+    ? `\n\n${state.activePreset.promptAddendum}`
+    : '';
+
   return `Please reimagine this low quality photoshop collage of a ${descriptor} on the empty site shown as a real, high-resolution photograph of a newly completed, inhabited environment captured by a professional architectural photographer.
 
 ${VIEW}
@@ -776,7 +1022,7 @@ Site & geometry: ${boundaryClause} Preserve all existing geometry — the site b
 
 PRESERVE EXACTLY (do NOT modify): Every neighbouring building must remain pixel-perfect identical to the source — same height, same parapet line, same facade material, same window grid, same roofline, same colour. Roads, kerbs, pavements, road markings, street furniture, parked vehicles, trees, hedges, planters, the horizon line and the sky must remain exactly as shown. The only change anywhere in the image is the new building inserted on the empty site.
 
-Architecture & materials: ${building} Newly constructed and well maintained. Clean, uniform surfaces. High-resolution material definition. Sharp edges and precise junctions. Accurate light response for glass, metal, stone and concrete. Do not introduce wear, weathering, dirt, stains, damage, or surface imperfections.${landscape ? `\n\nLandscape (inside the build site only): ${landscape}` : ''}${refClause}
+Architecture & materials: ${building} Newly constructed and well maintained. Clean, uniform surfaces. High-resolution material definition. Sharp edges and precise junctions. Accurate light response for glass, metal, stone and concrete. Do not introduce wear, weathering, dirt, stains, damage, or surface imperfections.${presetClause}${landscape ? `\n\nLandscape (inside the build site only): ${landscape}` : ''}${refClause}
 
 Lighting & exposure: ${lighting}
 
@@ -793,7 +1039,7 @@ function updateGenerateButton() {
   const btn = document.getElementById('generate-btn');
   const hint = document.getElementById('generate-hint');
   btn.disabled = !hasBuilding;
-  hint.textContent = hasBuilding ? 'Ready — click to generate your CGI visualisations' : 'Select a building type to continue';
+  hint.textContent = hasBuilding ? 'Ready — click to generate your photographs' : 'Select a building type to continue';
 }
 
 function handleFreeText(val) {
@@ -895,6 +1141,7 @@ async function handleGenerate() {
         pill_state: pillState,
         reference_images: state.referenceImages.map(r => ({ data: r.data, mimeType: r.mimeType })),
         has_boundary: !!state.hasBoundary,
+        preset_addendum: state.activePreset ? state.activePreset.promptAddendum : '',
       }),
     });
 
@@ -988,7 +1235,6 @@ function displayResults(images) {
     pair.style.display = 'grid';
     document.getElementById('results-hero').style.display = 'none';
   } else {
-    // Fallback: legacy single hero if we somehow don't have an original
     pair.style.display = 'none';
     const hero = document.getElementById('results-hero');
     hero.style.display = '';
@@ -998,11 +1244,136 @@ function displayResults(images) {
     `;
   }
 
-  // Grid (remaining images)
+  // Hide any previous follow-up panel
+  const fu = document.getElementById('followup-section');
+  if (fu) { fu.style.display = 'none'; document.getElementById('followup-grid').innerHTML = ''; }
+  state.chosenResultUrl = null;
+  state.followupJobId = null;
+
+  // Grid: ALL images (including the primary) get a "More from this" button.
+  // Some users will want follow-ups from a different angle than the primary.
   const grid = document.getElementById('results-grid');
   grid.innerHTML = '';
-  images.slice(1).forEach(img => {
+  images.forEach(img => {
     const label = VIEW_LABELS[img.type] || (img.type || '').replace(/_/g, ' ');
+    const item = document.createElement('div');
+    item.className = 'result-item';
+    item.innerHTML = `
+      <img src="${img.url}" alt="${label}">
+      <div class="result-item-footer">
+        <span class="result-label">${label}</span>
+        <div class="result-item-actions">
+          <button class="result-more" type="button" title="Generate ground-level photographs of this same building">📷 More photographs</button>
+          <a class="result-download" href="${img.url}" download="site-scout-${img.type}.jpg">Download</a>
+        </div>
+      </div>
+    `;
+    item.querySelector('.result-more').addEventListener('click', () => triggerFollowup(img.url, label));
+    grid.appendChild(item);
+  });
+
+  goToStep(5);
+}
+
+// ── "More photographs" follow-up flow ───────────────────────────────────────
+
+async function triggerFollowup(imageUrl, sourceLabel) {
+  const pillState = window.PromptBuilder.getState();
+  if (!pillState.building_type) return alert('Missing building type — go back to Step 3.');
+  if (state.followupJobId) return alert('A follow-up generation is already in progress.');
+
+  state.chosenResultUrl = imageUrl;
+  const section = document.getElementById('followup-section');
+  const status  = document.getElementById('followup-status');
+  const grid    = document.getElementById('followup-grid');
+  const prog    = document.getElementById('followup-progress');
+  const bar     = document.getElementById('followup-progress-bar');
+  section.style.display = 'block';
+  status.textContent = `Generating 4 ground-level & lifestyle photographs from "${sourceLabel}"…`;
+  grid.innerHTML = '';
+  prog.style.display = '';
+  bar.style.width = '0%';
+  section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  try {
+    const res = await fetch('/api/generate-followup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image_url: imageUrl,
+        pill_state: pillState,
+        preset_addendum: state.activePreset ? state.activePreset.promptAddendum : '',
+        city: state.currentCity,
+      }),
+    });
+    if (res.status === 402) {
+      const data = await res.json();
+      status.textContent = data.error || 'No credits remaining for follow-up.';
+      prog.style.display = 'none';
+      return;
+    }
+    const data = await res.json();
+    if (!data.job_id) throw new Error('No follow-up job ID returned');
+    state.followupJobId = data.job_id;
+    pollFollowupProgress();
+  } catch (err) {
+    console.error('[followup]', err);
+    status.textContent = 'Follow-up failed: ' + err.message;
+    prog.style.display = 'none';
+    state.followupJobId = null;
+  }
+}
+
+function pollFollowupProgress() {
+  const start = Date.now();
+  const status = document.getElementById('followup-status');
+  const grid   = document.getElementById('followup-grid');
+  const bar    = document.getElementById('followup-progress-bar');
+
+  const tick = async () => {
+    if (Date.now() - start > 240000) {
+      status.textContent = 'Follow-up timed out. Try again.';
+      state.followupJobId = null;
+      return;
+    }
+    try {
+      const res = await fetch(`/api/followup-status/${state.followupJobId}`);
+      const job = await res.json();
+      bar.style.width = `${job.progress || 0}%`;
+      if (job.message) status.textContent = job.message;
+
+      if (job.status === 'completed') {
+        renderFollowupResults(job.images);
+        state.followupJobId = null;
+        document.getElementById('followup-progress').style.display = 'none';
+        return;
+      }
+      if (job.status === 'error') {
+        status.textContent = 'Follow-up failed: ' + (job.message || 'unknown');
+        state.followupJobId = null;
+        return;
+      }
+      setTimeout(tick, 1500);
+    } catch (e) {
+      setTimeout(tick, 2500);
+    }
+  };
+  setTimeout(tick, 1000);
+}
+
+function renderFollowupResults(images) {
+  const grid = document.getElementById('followup-grid');
+  const status = document.getElementById('followup-status');
+  status.textContent = `${images.length} ground-level photograph${images.length === 1 ? '' : 's'} of the same building.`;
+  grid.innerHTML = '';
+  const FOLLOWUP_LABELS = {
+    street_eye_level: 'Street eye-level',
+    plaza_active:     'Plaza / public realm',
+    entrance_busy:    'Entrance close-up',
+    lifestyle_moment: 'Lifestyle moment',
+  };
+  images.forEach(img => {
+    const label = FOLLOWUP_LABELS[img.type] || img.type;
     const item = document.createElement('div');
     item.className = 'result-item';
     item.innerHTML = `
@@ -1014,8 +1385,6 @@ function displayResults(images) {
     `;
     grid.appendChild(item);
   });
-
-  goToStep(5);
 }
 
 function downloadAll() {

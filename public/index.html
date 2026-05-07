@@ -51,7 +51,7 @@
     <section class="step active" id="step-1">
       <div class="step-hero">
         <h1>Find a site.<br>Design a building.<br>See it built.</h1>
-        <p class="step-hero-sub">Choose a UK city to explore real vacant and brownfield sites. Pick one and generate photorealistic CGI of your proposed building.</p>
+        <p class="step-hero-sub">Choose a UK city to explore real vacant and brownfield sites. Pick one and generate photorealistic photograph of your proposed building.</p>
       </div>
 
       <div class="search-box">
@@ -101,7 +101,7 @@
         </div>
       </div>
 
-      <p class="capture-instructions">Drag to orbit, scroll to zoom. The view stays locked on your site &mdash; pick the angle you want as the base for your CGI.</p>
+      <p class="capture-instructions">Drag to orbit, scroll to zoom. The view stays locked on your site &mdash; pick the angle you want as the base for your photograph.</p>
 
       <div class="viewer-shell">
         <div id="site-viewer" class="site-viewer"></div>
@@ -139,7 +139,7 @@
       </div>
 
       <div class="step-actions" id="step2-actions">
-        <p class="selected-capture-hint">Lock in this angle to use as the base for your CGI generation.</p>
+        <p class="selected-capture-hint">Lock in this angle to use as the base for your photograph generation.</p>
         <button class="btn-primary" id="configure-btn" type="button" disabled>Use this view &#8594;</button>
       </div>
 
@@ -147,14 +147,28 @@
       <div class="boundary-editor" id="boundary-editor" style="display:none">
         <div class="boundary-header">
           <h3>Mark the build site</h3>
-          <p>Draw a red boundary around the empty plot. Anything outside this line stays untouched in the generated image.</p>
+          <p>Draw a red boundary around the empty plot. Anything outside this line stays untouched in the generated photograph.</p>
         </div>
+
+        <div class="boundary-toolbar">
+          <div class="tool-group" role="group" aria-label="Drawing tool">
+            <button class="tool-btn active" data-tool="brush"   type="button" title="Freehand brush">&#9999;&#65039; Brush</button>
+            <button class="tool-btn"        data-tool="line"    type="button" title="Straight line: click &amp; drag">&#9472; Line</button>
+            <button class="tool-btn"        data-tool="polygon" type="button" title="Polygon: click each vertex, double-click or Close to finish">&#11042; Polygon</button>
+            <button class="tool-btn"        data-tool="circle"  type="button" title="Circle: click centre &amp; drag for radius">&#9711; Circle</button>
+          </div>
+          <div class="tool-group" role="group" aria-label="Edit">
+            <button class="tool-btn" id="boundary-undo-btn"       type="button" title="Undo last action">&#8634; Undo</button>
+            <button class="tool-btn" id="boundary-close-poly-btn" type="button" title="Close polygon" style="display:none">Close polygon</button>
+          </div>
+        </div>
+
         <div class="boundary-canvas-wrap" id="boundary-canvas-wrap">
           <canvas id="boundary-base"></canvas>
           <canvas id="boundary-draw"></canvas>
         </div>
         <div class="boundary-controls">
-          <button class="btn-secondary" id="boundary-clear-btn" type="button">Clear</button>
+          <button class="btn-secondary" id="boundary-clear-btn" type="button">Clear all</button>
           <button class="btn-secondary" id="boundary-skip-btn"  type="button">Skip &mdash; no boundary</button>
           <button class="btn-primary"   id="boundary-save-btn"  type="button">Save boundary &amp; configure &#8594;</button>
         </div>
@@ -204,6 +218,13 @@
                 <span class="tile-icon">&#127973;</span><span class="tile-label">Healthcare</span>
               </button>
             </div>
+          </div>
+
+          <!-- Design presets — populated when a building type is selected -->
+          <div class="form-section preset-section" id="preset-section" style="display:none">
+            <h3 class="form-section-title">Suggested presets <span class="optional-tag">click to apply</span></h3>
+            <p class="form-hint" id="preset-hint">Pick a building type above to see curated design directions.</p>
+            <div class="preset-strip" id="preset-strip"></div>
           </div>
 
           <!-- Pill rows -->
@@ -265,7 +286,7 @@
         <div class="gen-spinner-wrap">
           <div class="gen-spinner"></div>
         </div>
-        <h2 id="gen-status-title">Generating your visualisations...</h2>
+        <h2 id="gen-status-title">Generating your photographs...</h2>
         <p id="gen-status-msg" class="step-sub">Analysing site context...</p>
         <div class="progress-bar-wrap">
           <div class="progress-bar" id="progress-bar" style="width:0%"></div>
@@ -278,7 +299,7 @@
     <section class="step" id="step-5">
       <div class="step-header results-header">
         <div>
-          <h2>Your visualisations</h2>
+          <h2>Your photographs</h2>
           <p class="step-sub" id="results-site-label"></p>
         </div>
         <div class="results-actions">
@@ -301,6 +322,18 @@
 
       <div id="results-hero" class="results-hero" style="display:none"></div>
       <div id="results-grid" class="results-grid"></div>
+
+      <!-- "More photographs" follow-up section: appears when user clicks "More from this view" -->
+      <div id="followup-section" class="followup-section" style="display:none">
+        <div class="followup-header">
+          <h3>More photographs from your chosen view</h3>
+          <p class="step-sub" id="followup-status">Generating ground-level &amp; lifestyle photographs of the same building&hellip;</p>
+        </div>
+        <div class="followup-progress" id="followup-progress" style="display:none">
+          <div class="progress-track"><div class="progress-bar" id="followup-progress-bar" style="width:0%"></div></div>
+        </div>
+        <div id="followup-grid" class="results-grid"></div>
+      </div>
     </section>
 
   </main>

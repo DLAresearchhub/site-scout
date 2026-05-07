@@ -10,6 +10,7 @@ const imageGenerator = require('../services/image-generator');
 const usageLogger = require('../services/usage-logger');
 const overlays = require('../services/overlays');
 const refAnalyzer = require('../services/ref-analyzer');
+const presets = require('../services/presets');
 
 const jobs = new Map();
 const FREE_LIMIT = parseInt(process.env.FREE_GENERATIONS_IP || '3', 10);
@@ -66,6 +67,41 @@ router.get('/overlay/listed', (req, res) => {
 
 router.get('/overlay/solar', (req, res) => {
   res.json({ source: 'Google Solar API', notReady: true, message: 'Solar potential overlay arrives in Phase 4 — needs the Solar API enabled on your Google Cloud project.' });
+});
+
+// ── Presets per building type (drives the preset chip strip on Step 3) ──────
+
+router.get('/presets', (req, res) => {
+  res.json(presets.PRESETS);
+});
+
+// ── Follow-up "More photographs" generation ─────────────────────────────────
+// Takes a previously-generated image URL and runs a second pass focused on
+// human-scale lifestyle shots (street eye-level, plaza life, dog walkers).
+const followupJobs = new Map();
+
+router.post('/generate-followup', checkCredits, async (req, res) => {
+  try {
+    const { image_url, pill_state, preset_addendum, city } = req.body;
+    if (!image_url || !pill_state || !pill_state.building_type) {
+      return res.status(400).json({ error: 'image_url and pill_state.building_type are required' });
+    }
+    const jobId = uuidv4();
+    followupJobs.set(jobId, { id: jobId, status: 'queued', progress: 0, images: [], error: null, message: '' });
+    setImmediate(async () => {
+      await processFollowupJob(jobId, { image_url, pill_state, preset_addendum, city, userId: req.user ? req.user.id : null });
+    });
+    res.json({ job_id: jobId, status: 'queued' });
+  } catch (error) {
+    console.error('Error queuing follow-up:', error);
+    res.status(500).json({ error: 'Failed to queue follow-up' });
+  }
+});
+
+router.get('/followup-status/:jobId', (req, res) => {
+  const job = followupJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  res.json({ job_id: job.id, status: job.status, progress: job.progress, images: job.images, message: job.message || job.error });
 });
 
 // ── Capture from client-rendered canvas ─────────────────────────────────────
@@ -181,7 +217,7 @@ router.get('/me', (req, res) => {
 
 router.post('/generate', checkCredits, async (req, res) => {
   try {
-    const { site_id, capture_id, city, pill_state, reference_images, has_boundary } = req.body;
+    const { site_id, capture_id, city, pill_state, reference_images, has_boundary, preset_addendum } = req.body;
 
     if (!site_id || !capture_id || !pill_state || !pill_state.building_type) {
       return res.status(400).json({ error: 'site_id, capture_id, and pill_state.building_type are required' });
@@ -199,6 +235,7 @@ router.post('/generate', checkCredits, async (req, res) => {
       await processGenerationJob(jobId, {
         site_id, capture_id, city, pill_state, reference_images,
         hasBoundary: !!has_boundary,
+        presetAddendum: preset_addendum || '',
         userId: req.user ? req.user.id : null,
       });
     });
@@ -224,7 +261,7 @@ async function processGenerationJob(jobId, params) {
   job.status = 'processing';
 
   try {
-    const { capture_id, pill_state, reference_images, hasBoundary, userId, city } = params;
+    const { capture_id, pill_state, reference_images, hasBoundary, presetAddendum, userId, city } = params;
 
     // Deduct credit before heavy work
     if (userId) {
@@ -260,7 +297,7 @@ async function processGenerationJob(jobId, params) {
         console.warn('[generate] ref-analyzer failed; continuing without descriptions:', e.message);
       }
     }
-    const promptOpts = { refDescriptions, hasBoundary: !!hasBoundary };
+    const promptOpts = { refDescriptions, hasBoundary: !!hasBoundary, presetAddendum: presetAddendum || '' };
 
     // Pick generation strategy based on the capture type
     const is3D = capture.type === 'mapbox3d' || capture.type === 'birdseye';
@@ -270,15 +307,15 @@ async function processGenerationJob(jobId, params) {
     if (is3D) {
       primaryView    = 'perspective_3d';
       additionalViews = ['perspective_dusk', 'perspective_night', 'street_front'];
-      primaryLabel   = 'Generating 3D perspective CGI...';
+      primaryLabel   = 'Generating primary photograph...';
     } else if (isStreet) {
       primaryView    = 'street_front';
       additionalViews = ['street_corner', 'street_entrance', 'aerial'];
-      primaryLabel   = 'Generating street-level CGI...';
+      primaryLabel   = 'Generating street-level photograph...';
     } else {
       primaryView    = 'aerial';
       additionalViews = ['street_front', 'street_corner', 'street_entrance'];
-      primaryLabel   = 'Generating aerial CGI...';
+      primaryLabel   = 'Generating aerial photograph...';
     }
 
     const statusSteps = [
@@ -322,6 +359,69 @@ async function processGenerationJob(jobId, params) {
     });
   } catch (error) {
     console.error(`Job ${jobId} failed:`, error);
+    job.status = 'error';
+    job.error = error.message;
+  }
+}
+
+// ── Follow-up generation processor ──────────────────────────────────────────
+
+async function processFollowupJob(jobId, params) {
+  const job = followupJobs.get(jobId);
+  if (!job) return;
+  job.status = 'processing';
+
+  try {
+    const { image_url, pill_state, presetAddendum, presetAddendum: pa, city, userId } = params;
+    const addendum = params.preset_addendum || params.presetAddendum || '';
+
+    if (userId) {
+      const remaining = usageLogger.deductCredit(userId);
+      if (remaining === -1) {
+        job.status = 'error';
+        job.error = 'Insufficient credits';
+        return;
+      }
+    }
+
+    // Resolve the chosen image to disk + base64. URL shape: /api/capture/file/<filename>
+    const m = /\/api\/capture\/file\/([^?#]+)$/.exec(image_url || '');
+    if (!m) throw new Error('Cannot resolve chosen image URL: ' + image_url);
+    const filename = decodeURIComponent(m[1]);
+    const filePath = path.join(__dirname, '../public/site-images', filename);
+    if (!fs.existsSync(filePath)) throw new Error('Chosen image file missing on disk');
+    const sourceBase64 = fs.readFileSync(filePath).toString('base64');
+
+    const followupViews = [
+      { type: 'street_eye_level', label: 'Generating street eye-level photograph...' },
+      { type: 'plaza_active',     label: 'Generating plaza / public-realm photograph...' },
+      { type: 'entrance_busy',    label: 'Generating entrance close-up photograph...' },
+      { type: 'lifestyle_moment', label: 'Generating lifestyle moment photograph...' },
+    ];
+
+    for (let i = 0; i < followupViews.length; i++) {
+      const v = followupViews[i];
+      job.message = v.label;
+      job.progress = Math.round((i / followupViews.length) * 100);
+      const prompt = promptBuilder.buildFollowupPrompt(pill_state, v.type, { presetAddendum: addendum });
+      const url = await imageGenerator.generateFromCapture(sourceBase64, 'image/jpeg', prompt, []);
+      job.images.push({ type: v.type, url });
+    }
+
+    job.status = 'completed';
+    job.progress = 100;
+    job.message = 'Done';
+
+    usageLogger.logGeneration({
+      jobId, city: city || 'Unknown',
+      building_type: pill_state.building_type,
+      stories: pill_state.stories,
+      images_generated: job.images.length,
+      status: 'completed',
+      user_id: userId,
+    });
+  } catch (error) {
+    console.error(`Follow-up job ${jobId} failed:`, error);
     job.status = 'error';
     job.error = error.message;
   }
